@@ -1,0 +1,16 @@
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+*.pyc
+*.tmp
+*.log
+work/
+reports/
+*.ai-check.rewritten.docx
+AI测试.docx

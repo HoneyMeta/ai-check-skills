@@ -1,0 +1,27 @@
+{
+  "results": [
+    {
+      "chunkId": "chunk-0001",
+      "sensitivity": "medium",
+      "aigcValue": 0.612,
+      "verdict": "suspicious",
+      "reason": "模板化收束和泛化意义判断明显，缺少具体实验或方法边界支撑",
+      "signals": [
+        "模板表达",
+        "泛化套话"
+      ]
+    },
+    {
+      "chunkId": "chunk-0002",
+      "sensitivity": "medium",
+      "aigcValue": 0.220,
+      "verdict": "human",
+      "reason": "有模型、实验、指标和引用支撑，不纳入报告",
+      "signals": [
+        "具体方法",
+        "定量结果"
+      ]
+    }
+  ]
+}
+

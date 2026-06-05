@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "tool": "AI-check",
+  "sourcePath": "sample.docx",
+  "documentTitle": "水声目标识别测试论文",
+  "author": "unknown",
+  "createdAt": "2026-06-05T00:00:00+08:00",
+  "totalChars": 150,
+  "chunks": [
+    {
+      "chunkId": "chunk-0001",
+      "sectionType": "body",
+      "sectionTitle": "1 绪论",
+      "text": "综上所述，水声目标识别研究具有重要意义，同时为后续智能化系统建设提供参考。",
+      "charCount": 37,
+      "importance": "medium",
+      "traceFeatures": {
+        "riskSignals": [
+          "模板表达:综上所述",
+          "泛化套话:重要意义套话"
+        ],
+        "mitigatingSignals": [],
+        "templatePhrases": [
+          "综上所述"
+        ],
+        "connectorCount": 2,
+        "connectorDensity": 1.0,
+        "sentenceCount": 1,
+        "sentenceLengthVariance": 0.0,
+        "uniformSentenceRhythm": false,
+        "genericClaimCount": 1,
+        "evidenceMarkers": []
+      }
+    },
+    {
+      "chunkId": "chunk-0002",
+      "sectionType": "body",
+      "sectionTitle": "2 方法",
+      "text": "本文采用 Transformer 与 CQT 特征构建识别模型，并在公开数据集上进行对比实验，准确率提升 2.1% [4]。",
+      "charCount": 58,
+      "importance": "medium",
+      "traceFeatures": {
+        "riskSignals": [],
+        "mitigatingSignals": [
+          "具体证据:引用编号",
+          "具体证据:实验指标",
+          "具体证据:模型或方法名",
+          "具体证据:实验结果表述",
+          "定量结果支撑"
+        ],
+        "templatePhrases": [],
+        "connectorCount": 0,
+        "connectorDensity": 0.0,
+        "sentenceCount": 1,
+        "sentenceLengthVariance": 0.0,
+        "uniformSentenceRhythm": false,
+        "genericClaimCount": 0,
+        "evidenceMarkers": [
+          "引用编号",
+          "实验指标",
+          "模型或方法名",
+          "实验结果表述"
+        ]
+      }
+    }
+  ]
+}
+

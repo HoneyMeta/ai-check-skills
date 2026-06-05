@@ -1,0 +1,8 @@
+interface:
+  display_name: "AI-check"
+  short_description: "Check DOCX AI-writing style and reports."
+  brand_color: "#4B89DC"
+  default_prompt: "Use $AI-check to generate an AI-writing-rate report for this Word document, then ask before revising it."
+
+policy:
+  allow_implicit_invocation: true
