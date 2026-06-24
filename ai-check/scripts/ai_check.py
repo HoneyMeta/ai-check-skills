@@ -869,6 +869,13 @@ def render_pdf(path: Path, scan: dict[str, Any], rows: list[dict[str, Any]], sum
         pdfmetrics.registerFont(UnicodeCIDFont(fallback))
         return fallback
 
+    def risk_palette(value: float) -> tuple[str, Any, Any]:
+        if value >= 0.75:
+            return "高风险", colors.HexColor("#D93025"), colors.HexColor("#FDECEC")
+        if value >= 0.45:
+            return "中风险", colors.HexColor("#B06000"), colors.HexColor("#FFF4D8")
+        return "低风险", colors.HexColor("#188038"), colors.HexColor("#E6F4EA")
+
     class DistributionBars(Flowable):
         def __init__(self, values: list[float], height: float = 22 * mm) -> None:
             super().__init__()
@@ -881,12 +888,15 @@ def render_pdf(path: Path, scan: dict[str, Any], rows: list[dict[str, Any]], sum
             return avail_width, self.height
 
         def draw(self) -> None:
-            pad = 5
-            base_y = pad
-            chart_h = self.height - pad * 2
-            self.canv.setFillColor(colors.HexColor("#FBFCFE"))
-            self.canv.setStrokeColor(colors.HexColor("#D7DEE8"))
-            self.canv.roundRect(0, 0, self.width, self.height, 4, stroke=1, fill=1)
+            pad = 6
+            base_y = pad + 1
+            chart_h = self.height - pad * 2 - 1
+            self.canv.setFillColor(softer)
+            self.canv.setStrokeColor(border)
+            self.canv.roundRect(0, 0, self.width, self.height, 6, stroke=1, fill=1)
+            self.canv.setStrokeColor(colors.HexColor("#E5EAF1"))
+            self.canv.setLineWidth(0.5)
+            self.canv.line(pad, base_y, self.width - pad, base_y)
             if not self.values:
                 return
             gap = 1.2
@@ -896,23 +906,23 @@ def render_pdf(path: Path, scan: dict[str, Any], rows: list[dict[str, Any]], sum
             bar_w = max(1.4, min(5.0, available / max(1, len(values))))
             x = pad
             for value in values:
-                color = "#D93025" if value >= 0.75 else "#F9AB00" if value >= 0.45 else "#34A853"
+                _, accent, _tint = risk_palette(value)
                 height = max(5, value * chart_h)
-                self.canv.setFillColor(colors.HexColor(color))
-                self.canv.roundRect(x, base_y, bar_w, height, 1.1, stroke=0, fill=1)
+                self.canv.setFillColor(accent)
+                self.canv.roundRect(x, base_y, bar_w, height, 1.2, stroke=0, fill=1)
                 x += bar_w + gap
 
     font_name = register_pdf_font()
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    page_w, _page_h = A4
+    page_w, page_h = A4
     doc = SimpleDocTemplate(
         str(path),
         pagesize=A4,
         rightMargin=16 * mm,
         leftMargin=16 * mm,
-        topMargin=16 * mm,
-        bottomMargin=15 * mm,
+        topMargin=18 * mm,
+        bottomMargin=16 * mm,
         title="AI-check / EasyIdea 论文AI率检测报告",
         author="AI-check",
     )
@@ -927,25 +937,55 @@ def render_pdf(path: Path, scan: dict[str, Any], rows: list[dict[str, Any]], sum
     red = colors.HexColor("#D93025")
     green = colors.HexColor("#188038")
     amber = colors.HexColor("#B06000")
+    soft_red = colors.HexColor("#FDECEC")
+    soft_amber = colors.HexColor("#FFF4D8")
+    soft_green = colors.HexColor("#E6F4EA")
+    soft_blue = colors.HexColor("#E8F0FE")
+    soft_slate = colors.HexColor("#F8FAFC")
 
-    base = ParagraphStyle("AICheckBase", fontName=font_name, fontSize=9.2, leading=13.2, textColor=ink, alignment=TA_LEFT, wordWrap="CJK")
-    title_style = ParagraphStyle("AICheckTitle", parent=base, fontSize=20, leading=26, alignment=TA_CENTER, textColor=colors.HexColor("#111827"), spaceAfter=3 * mm)
-    subtitle_style = ParagraphStyle("AICheckSubtitle", parent=base, fontSize=8.8, leading=12, alignment=TA_CENTER, textColor=muted, spaceAfter=6 * mm)
-    meta_style = ParagraphStyle("AICheckMeta", parent=base, fontSize=8.7, leading=12.2)
-    section_style = ParagraphStyle("AICheckSection", parent=base, fontSize=11.2, leading=15, textColor=colors.HexColor("#111827"))
-    metric_value_style = ParagraphStyle("AICheckMetricValue", parent=base, fontSize=15, leading=18, alignment=TA_CENTER, textColor=red)
-    metric_label_style = ParagraphStyle("AICheckMetricLabel", parent=base, fontSize=7.6, leading=10, alignment=TA_CENTER, textColor=muted)
-    table_header_style = ParagraphStyle("AICheckTableHeader", parent=base, fontSize=8.6, leading=11, alignment=TA_CENTER, textColor=colors.HexColor("#111827"))
-    body_style = ParagraphStyle("AICheckBody", parent=base, fontSize=8.6, leading=12.8)
-    reason_style = ParagraphStyle("AICheckReason", parent=base, fontSize=7.3, leading=10.2, textColor=colors.HexColor("#6B7280"))
-    score_style = ParagraphStyle("AICheckScore", parent=base, fontSize=8.6, leading=12, alignment=TA_RIGHT)
-    note_style = ParagraphStyle("AICheckNote", parent=base, fontSize=8.0, leading=11.5, textColor=muted)
+    base = ParagraphStyle("AICheckBase", fontName=font_name, fontSize=9.1, leading=13.0, textColor=ink, alignment=TA_LEFT, wordWrap="CJK")
+    title_style = ParagraphStyle("AICheckTitle", parent=base, fontSize=19.2, leading=24, alignment=TA_LEFT, textColor=colors.HexColor("#0F172A"), spaceAfter=1.3 * mm)
+    subtitle_style = ParagraphStyle("AICheckSubtitle", parent=base, fontSize=8.7, leading=11.8, alignment=TA_LEFT, textColor=muted)
+    meta_style = ParagraphStyle("AICheckMeta", parent=base, fontSize=8.2, leading=11.4, textColor=ink)
+    section_style = ParagraphStyle("AICheckSection", parent=base, fontSize=11.3, leading=14.8, textColor=colors.HexColor("#0F172A"))
+    metric_value_style = ParagraphStyle("AICheckMetricValue", parent=base, fontSize=16, leading=18.5, alignment=TA_CENTER, textColor=red)
+    metric_label_style = ParagraphStyle("AICheckMetricLabel", parent=base, fontSize=7.5, leading=9.8, alignment=TA_CENTER, textColor=muted)
+    table_header_style = ParagraphStyle("AICheckTableHeader", parent=base, fontSize=8.5, leading=10.8, alignment=TA_CENTER, textColor=colors.HexColor("#0F172A"))
+    body_style = ParagraphStyle("AICheckBody", parent=base, fontSize=8.55, leading=12.4)
+    reason_style = ParagraphStyle("AICheckReason", parent=base, fontSize=7.15, leading=9.8, textColor=colors.HexColor("#6B7280"))
+    score_style = ParagraphStyle("AICheckScore", parent=base, fontSize=8.25, leading=10.8, alignment=TA_CENTER)
+    note_style = ParagraphStyle("AICheckNote", parent=base, fontSize=7.9, leading=11.0, textColor=muted)
 
     def safe(value: Any) -> str:
         return html.escape(str(value or "")).replace("\n", "<br/>")
 
     def paragraph(value: Any, style: ParagraphStyle = base) -> Paragraph:
         return Paragraph(safe(value), style)
+
+    def pill(text: str, bg: Any, fg: Any) -> Table:
+        pill_style = ParagraphStyle(
+            "AICheckPill",
+            parent=base,
+            fontSize=7.2,
+            leading=9.2,
+            alignment=TA_CENTER,
+            textColor=fg,
+        )
+        table = Table([[Paragraph(safe(text), pill_style)]], hAlign="LEFT")
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, -1), bg),
+                    ("BOX", (0, 0), (-1, -1), 0.45, fg),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                    ("TOPPADDING", (0, 0), (-1, -1), 1.8),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 1.8),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ]
+            )
+        )
+        return table
 
     def color_for_value(value: float) -> Any:
         if value >= 0.75:
@@ -954,18 +994,83 @@ def render_pdf(path: Path, scan: dict[str, Any], rows: list[dict[str, Any]], sum
             return amber
         return green
 
+    def tint_for_value(value: float) -> Any:
+        if value >= 0.75:
+            return soft_red
+        if value >= 0.45:
+            return soft_amber
+        return soft_green
+
+    def label_for_value(value: float) -> str:
+        if value >= 0.75:
+            return "高风险"
+        if value >= 0.45:
+            return "中风险"
+        return "低风险"
+
+    def header_card() -> Table:
+        meta_data = [
+            [paragraph(f"检测时间：{detection_time}", meta_style), paragraph(f"检测文献：{title}", meta_style)],
+            [paragraph(f"作者：{author}", meta_style), paragraph("检测类型：AIGC 写作检测", meta_style)],
+            [paragraph("官网：AI-check / EasyIdea", meta_style), paragraph(f"检测范围：{scope}", meta_style)],
+        ]
+        meta_table = Table(meta_data, colWidths=[doc.width * 0.38, doc.width * 0.62], hAlign="LEFT")
+        meta_table.setStyle(
+            TableStyle(
+                [
+                    ("SPAN", (0, 2), (1, 2)),
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+                    ("BOX", (0, 0), (-1, -1), 0.45, border),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#E7EDF5")),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 7),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4.5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4.5),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ]
+            )
+        )
+        content = [
+            pill("AIGC 写作检测", blue_dark, colors.white),
+            Spacer(1, 2.5 * mm),
+            Paragraph("AI-check / EasyIdea 论文AI率检测报告", title_style),
+            Paragraph("独立 DOCX 解析生成 · 可选择文本 PDF · 结果仅供参考", subtitle_style),
+            Spacer(1, 3 * mm),
+            meta_table,
+        ]
+        table = Table([["", content]], colWidths=[4 * mm, doc.width - 4 * mm], hAlign="LEFT")
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (0, 0), blue_dark),
+                    ("BACKGROUND", (1, 0), (1, 0), soft_slate),
+                    ("BOX", (0, 0), (-1, -1), 0.55, border),
+                    ("LEFTPADDING", (0, 0), (0, 0), 0),
+                    ("RIGHTPADDING", (0, 0), (0, 0), 0),
+                    ("LEFTPADDING", (1, 0), (1, 0), 8),
+                    ("RIGHTPADDING", (1, 0), (1, 0), 8),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (1, 0), (1, 0), 7),
+                    ("BOTTOMPADDING", (1, 0), (1, 0), 7),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
+        )
+        return table
+
     def section_title(text: str) -> Table:
-        table = Table([["", paragraph(text, section_style)]], colWidths=[3.5 * mm, doc.width - 3.5 * mm], hAlign="LEFT")
+        table = Table([["", paragraph(text, section_style)]], colWidths=[4 * mm, doc.width - 4 * mm], hAlign="LEFT")
         table.setStyle(
             TableStyle(
                 [
                     ("BACKGROUND", (0, 0), (0, 0), blue),
                     ("BACKGROUND", (1, 0), (1, 0), soft),
-                    ("BOX", (0, 0), (-1, -1), 0.45, border),
+                    ("BOX", (0, 0), (-1, -1), 0.5, border),
                     ("LEFTPADDING", (0, 0), (0, 0), 0),
                     ("RIGHTPADDING", (0, 0), (0, 0), 0),
-                    ("LEFTPADDING", (1, 0), (1, 0), 7),
-                    ("RIGHTPADDING", (1, 0), (1, 0), 7),
+                    ("LEFTPADDING", (1, 0), (1, 0), 8),
+                    ("RIGHTPADDING", (1, 0), (1, 0), 8),
                     ("TOPPADDING", (0, 0), (-1, -1), 5),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -976,34 +1081,39 @@ def render_pdf(path: Path, scan: dict[str, Any], rows: list[dict[str, Any]], sum
 
     def metric_table() -> Table:
         values = [
-            (percent(summary["aiRate"]), "AI率", red),
-            (percent(summary["suspiciousAiRate"]), "疑似AI率", amber),
-            (percent(summary["humanRate"]), "人写作率", green),
-            (f"[{summary['suspiciousChars']}]", "疑似AI写作字数", red),
-            (f"[{summary['totalChars']}]", "总字数", blue_dark),
+            (percent(summary["aiRate"]), "AI率", red, soft_red),
+            (percent(summary["suspiciousAiRate"]), "疑似AI率", amber, soft_amber),
+            (percent(summary["humanRate"]), "人写作率", green, soft_green),
+            (str(summary["suspiciousChars"]), "疑似AI写作字数", red, soft_red),
+            (str(summary["totalChars"]), "总字数", blue_dark, soft_blue),
         ]
         value_cells = []
         label_cells = []
-        for value, label, color in values:
+        for value, label, color, tint in values:
             value_style = ParagraphStyle(f"AICheckMetricValue{label}", parent=metric_value_style, textColor=color)
             value_cells.append(Paragraph(safe(value), value_style))
             label_cells.append(Paragraph(safe(label), metric_label_style))
         table = Table([value_cells, label_cells], colWidths=[doc.width / 5] * 5, hAlign="LEFT")
-        table.setStyle(
-            TableStyle(
+        table_style_commands: list[tuple[Any, ...]] = [
+            ("BOX", (0, 0), (-1, -1), 0.55, border),
+            ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#E6ECF4")),
+            ("TOPPADDING", (0, 0), (-1, 0), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
+            ("TOPPADDING", (0, 1), (-1, 1), 0),
+            ("BOTTOMPADDING", (0, 1), (-1, 1), 8),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]
+        for index, (_, _, color, tint) in enumerate(values):
+            table_style_commands.extend(
                 [
-                    ("BACKGROUND", (0, 0), (-1, -1), colors.white),
-                    ("BOX", (0, 0), (-1, -1), 0.45, border),
-                    ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#E5EAF1")),
-                    ("TOPPADDING", (0, 0), (-1, 0), 8),
-                    ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
-                    ("TOPPADDING", (0, 1), (-1, 1), 0),
-                    ("BOTTOMPADDING", (0, 1), (-1, 1), 8),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 3),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("BACKGROUND", (index, 0), (index, 1), tint),
+                    ("LINEABOVE", (index, 0), (index, 0), 1.25, color),
                 ]
             )
+        table.setStyle(
+            TableStyle(table_style_commands)
         )
         return table
 
@@ -1011,42 +1121,27 @@ def render_pdf(path: Path, scan: dict[str, Any], rows: list[dict[str, Any]], sum
     title = str(scan.get("documentTitle") or "untitled")
     author = str(scan.get("author") or "unknown")
     scope = "ChatGPT 讯飞星火 Gemini Kimi Claude 文心一言 通义千问 智谱AI 百川智能 360智脑 豆包 DeepSeek（包括但不限于）"
-    meta_data = [
-        [paragraph(f"检测时间：{detection_time}", meta_style), paragraph(f"检测文献：{title}", meta_style)],
-        [paragraph(f"作者：{author}", meta_style), paragraph("检测类型：AIGC 写作检测", meta_style)],
-        [paragraph(f"官网：{OFFICIAL_SITE}", meta_style), paragraph(f"检测范围：{scope}", meta_style)],
-    ]
-    meta_table = Table(meta_data, colWidths=[doc.width * 0.38, doc.width * 0.62], hAlign="LEFT")
-    meta_table.setStyle(
-        TableStyle(
-            [
-                ("SPAN", (0, 2), (1, 2)),
-                ("BACKGROUND", (0, 0), (-1, -1), softer),
-                ("BOX", (0, 0), (-1, -1), 0.45, border),
-                ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#E9EEF5")),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ]
-        )
-    )
 
     story: list[Any] = [
-        Paragraph("AI-check / EasyIdea 论文AI率检测报告", title_style),
-        Paragraph("独立 DOCX 解析生成 · 可选择文本 PDF · 结果仅供参考", subtitle_style),
-        meta_table,
+        header_card(),
         Spacer(1, 6 * mm),
         section_title("检测结果"),
         Spacer(1, 3 * mm),
         metric_table(),
         Spacer(1, 6 * mm),
-        section_title("疑似片段分布图"),
+        section_title(f"疑似片段分布图（{summary['fragmentCount']} 段）"),
         Spacer(1, 3 * mm),
         DistributionBars([row["result"].aigcValue for row in rows]),
+        Spacer(1, 2 * mm),
+        Table(
+            [[pill("低风险", soft_green, green), pill("中风险", soft_amber, amber), pill("高风险", soft_red, red)]],
+            colWidths=[doc.width / 3] * 3,
+            hAlign="LEFT",
+        ),
+        Spacer(1, 2 * mm),
+        paragraph("柱形越高表示 AIGC 值越高，颜色由绿到红代表风险升高。", note_style),
         Spacer(1, 6 * mm),
-        section_title("原文内容 / 疑似AI写作率"),
+        section_title(f"原文内容 / 疑似AI写作率（{summary['fragmentCount']} 段）"),
         Spacer(1, 3 * mm),
     ]
 
@@ -1055,16 +1150,19 @@ def render_pdf(path: Path, scan: dict[str, Any], rows: list[dict[str, Any]], sum
         result: Result = row["result"]
         reason = report_reason(result)
         value = max(0.0, min(1.0, result.aigcValue))
+        label, accent, tint = risk_palette(value)
         original_cell: list[Any] = [paragraph(row["text"], body_style)]
         if reason:
             original_cell.extend([Spacer(1, 2), paragraph(f"检测原因：{reason}", reason_style)])
-        score_color = color_for_value(value)
-        score = Paragraph(f'<font color="{score_color.hexval()}">AIGC值：{value:.3f}</font>', score_style)
+        score = Paragraph(
+            f'<b>{label}</b><br/><font color="{accent.hexval()}">AIGC值：{value:.3f}</font>',
+            score_style,
+        )
         table_data.append([original_cell, score])
 
     report_table = LongTable(table_data, colWidths=[doc.width * 0.74, doc.width * 0.26], repeatRows=1, hAlign="LEFT", splitByRow=1)
     table_style_commands: list[tuple[Any, ...]] = [
-        ("BACKGROUND", (0, 0), (-1, 0), soft),
+        ("BACKGROUND", (0, 0), (-1, 0), soft_blue),
         ("BOX", (0, 0), (-1, -1), 0.45, border),
         ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#E5EAF1")),
         ("LEFTPADDING", (0, 0), (-1, -1), 7),
@@ -1074,8 +1172,15 @@ def render_pdf(path: Path, scan: dict[str, Any], rows: list[dict[str, Any]], sum
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]
     for row_index in range(1, len(table_data)):
-        if row_index % 2 == 0:
-            table_style_commands.append(("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#FCFDFF")))
+        result = rows[row_index - 1]["result"]
+        value = max(0.0, min(1.0, result.aigcValue))
+        _, accent, tint = risk_palette(value)
+        table_style_commands.extend(
+            [
+                ("BACKGROUND", (0, row_index), (-1, row_index), tint),
+                ("LINEBEFORE", (1, row_index), (1, row_index), 1.0, accent),
+            ]
+        )
     report_table.setStyle(TableStyle(table_style_commands))
     story.append(report_table)
     story.extend(
@@ -1092,6 +1197,17 @@ def render_pdf(path: Path, scan: dict[str, Any], rows: list[dict[str, Any]], sum
 
     def draw_page(canvas_obj: Any, doc_obj: Any) -> None:
         canvas_obj.saveState()
+        header_h = 8.5 * mm
+        canvas_obj.setFillColor(soft_slate)
+        canvas_obj.rect(0, page_h - header_h, page_w, header_h, stroke=0, fill=1)
+        canvas_obj.setStrokeColor(blue_dark)
+        canvas_obj.setLineWidth(0.7)
+        canvas_obj.line(0, page_h - header_h, page_w, page_h - header_h)
+        canvas_obj.setFont(font_name, 7.6)
+        canvas_obj.setFillColor(blue_dark)
+        canvas_obj.drawString(doc_obj.leftMargin, page_h - 5.6 * mm, "AI-check / EasyIdea")
+        canvas_obj.setFillColor(muted)
+        canvas_obj.drawRightString(page_w - doc_obj.rightMargin, page_h - 5.6 * mm, f"第 {doc_obj.page} 页")
         footer_y = 10 * mm
         canvas_obj.setStrokeColor(colors.HexColor("#E5E7EB"))
         canvas_obj.setLineWidth(0.5)
