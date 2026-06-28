@@ -32,15 +32,14 @@ AI-check Skills 不依赖 LibreOffice、`soffice`、Microsoft Word 自动化、D
 
 ## 安装
 
-```bash
-python -m pip install python-docx reportlab
+在 Claude Code、Codex、OpenCode 等 AI 编程助手中发送：
+
+```text
+帮我安装 HoneyMeta/ai-check-skills
 ```
 
-运行测试：
-
-```bash
-python -m pip install pytest
-```
+安装完成后，重启 Claude Code / Codex / OpenCode 等客户端，让新安装的 skill 生效。
+如果客户端提示缺少依赖，让 AI 助手按仓库说明自动安装即可。
 
 ## 目录结构
 
@@ -65,55 +64,30 @@ tests/
 
 ## 快速开始
 
-扫描 DOCX，生成确定性的 chunk 和 traceFeatures：
+在 AI 编程助手中发送：
 
-```bash
-python ai-check/scripts/ai_check.py scan paper.docx --out work/scan.json
+```text
+使用 ai-check-skills 帮我为 XXXX（文档路径）生成 AI率检测报告
 ```
 
-`scan.json` 会包含 chunk 和可解释信号，但不会包含最终 AI 概率。AI 助手应读取每个 chunk，并生成类似下面的
-results JSON：
+例如：
 
-```json
-{
-  "documentTitle": "paper",
-  "author": "unknown",
-  "results": [
-    {
-      "chunkId": "chunk-0001",
-      "sensitivity": "medium",
-      "aigcValue": 0.62,
-      "verdict": "suspicious",
-      "reason": "模板化收束和泛化价值判断较明显，具体实验支撑不足",
-      "signals": ["泛化套话", "连接词密集"]
-    }
-  ]
-}
+```text
+使用 ai-check-skills 帮我为 F:\papers\main.docx 生成 AI率检测报告
 ```
 
-生成 AI 率报告：
-
-```bash
-python ai-check/scripts/ai_check.py report work/scan.json work/results.json --out-dir work/report
-```
-
-报告命令会输出：
+AI 助手会读取 DOCX，生成可解释的片段信号，并输出：
 
 - 可选择文本的 PDF 报告
 - HTML 报告
 - summary JSON
 
-用户确认修改方案后，将替换写入新的 DOCX：
-
-```bash
-python ai-check/scripts/ai_rewrite_docx.py apply paper.docx work/replacements.json --out paper.ai-check.rewritten.docx
-```
-
+如果需要继续降 AI 率，可以在报告生成后让 AI 助手先列出改写方案；用户确认后再写入新的 DOCX。
 原始 DOCX 不会被原地修改。
 
 ## 示例提示词
 
-- `Use AI-check to generate an AI writing rate report for F:\papers\main.docx.`
+- `使用 ai-check-skills 帮我为 F:\papers\main.docx 生成 AI率检测报告`
 - `根据 AI-check 报告，先给我看需要修改的片段和改写方案，确认后再写出新的 Word。`
 - `只检测，不改 Word。`
 
@@ -167,17 +141,31 @@ assistant remains responsible for judgment and rewriting so the user can see the
 
 ### Install
 
-```bash
-python -m pip install python-docx reportlab
+Ask your AI coding assistant to install this repository as a skill:
+
+```text
+Install HoneyMeta/ai-check-skills
 ```
+
+After installation, restart Claude Code / Codex / OpenCode, or the assistant runtime you use, so the
+new skill is loaded.
 
 ### Quick Start
 
-```bash
-python ai-check/scripts/ai_check.py scan paper.docx --out work/scan.json
-python ai-check/scripts/ai_check.py report work/scan.json work/results.json --out-dir work/report
-python ai-check/scripts/ai_rewrite_docx.py apply paper.docx work/replacements.json --out paper.ai-check.rewritten.docx
+Send a prompt like:
+
+```text
+Use ai-check-skills to generate an AI-rate report for C:\papers\main.docx.
 ```
+
+For Chinese workflows, you can use:
+
+```text
+使用 ai-check-skills 帮我为 XXXX（文档路径）生成 AI率检测报告
+```
+
+The assistant will scan the DOCX, produce an explainable PDF/HTML report, and only write a rewritten
+DOCX after you approve the replacement plan.
 
 ### Safety Notes
 
