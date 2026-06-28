@@ -7,7 +7,7 @@ Word/DOCX 论文 AI 率检测报告生成、自动化降 AI 率、重复率/AI �
 > 的论文写作、DOCX 工作台、报告导入、标注修改、批量审阅和一键采纳/放弃能力，欢迎下载使用：
 > https://honeymeta.com/easyidea
 
-![AI-check report preview](docs/assets/ai-check-report-preview.png)
+![AI-check report preview](docs/assets/ai-check-report-preview.png?v=20260628)
 
 ## 功能亮点
 
