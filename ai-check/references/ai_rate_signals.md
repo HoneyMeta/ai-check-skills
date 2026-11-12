@@ -21,6 +21,14 @@ assistant, not an automatic probability.
 - Buzzwords: `赋能`, `助力`, `深度融合`, `全方位`, `多维度`, `新范式`, `至关重要`, `发挥着重要作用`,
   `提供了有力支撑`, `奠定了坚实基础`, `日益凸显`.
 - Stacked dashes: two or more `——` (or English em dashes `—`) used as clause glue in one passage.
+- Reframing contrast: `不是…而是…`, `并非…而是…` used to dramatise an ordinary point.
+- Role and closer formulas: `扮演着…角色`, `为…提供了新的思路/视角/参考`, `具有一定的参考价值`,
+  `从…到…再到…` staged ranges.
+- Policy-report jargon in a paper: `抓手`, `提质增效`, `降本增效`, `全链条`, `多措并举`.
+- Repeated sentence openers (句首重复): three or more sentences in one passage (and at least 40% of
+  them) start with the same word, e.g. `本文…本文…本文…`.
+- Unquantified effect claims (效果表述缺少数据): `显著提升`, `有效降低`, `大幅改善` in a sentence
+  that contains no number.
 
 ## English Risk Signals
 
@@ -32,13 +40,20 @@ assistant, not an automatic probability.
   `multifaceted`, `realm`, `seamless`, `cutting-edge`, `paving the way`, `shed light on`,
   `plays a crucial role`, `significant implications`.
 - Contribution lists: `Our main contributions are …`.
+- Reframing: `It's not just X, it's Y`; scene-setting: `In the realm/landscape of …`;
+  `serves as a testament/cornerstone`; `highlights the importance of`.
+- More LLM-flavoured vocabulary: `foster`, `leverage`, `holistic`, `nuanced`, `meticulous`,
+  `interplay`, `a myriad of`, `plethora`, `bolster`, `elucidate`, `unveil`, `harness`.
+- Unquantified effect claims: `significantly improves`, `substantially reduces` with no number in the
+  sentence.
 
 Each English signal is weak evidence on its own; many of these words are legitimate in technical prose.
 
 ## Mitigating Signals
 
 - Citation markers such as `[4]`, `[20-22]`, `[3, 5]`.
-- Citation markers in author-year form such as `(Smith et al., 2024)`.
+- Citation markers in author-year form such as `(Smith et al., 2024)`, LaTeX `\cite{key}` /
+  `\citep{..}` and Pandoc `[@key]`.
 - Concrete metrics such as `%`, FLOPs, ms, Hz, kHz, dB, AUC, F1, MB, GB, mAP, mIoU, BLEU, PSNR, SSIM.
 - Statistics such as `p < 0.05`, `±`, `95% CI`, `n = 30`, 标准差, 置信区间.
 - Named methods or models such as CNN, LSTM, Transformer, ResNet-50, YOLOv8, Grad-CAM, XGBoost, CQT, and
@@ -54,3 +69,15 @@ Reduction should remove the risk signals that caused high scores. A medium reduc
 makes prose more formal, smoother, and more balanced is a failure mode because it may preserve or
 increase AI-writing style.
 
+
+## Document-level Checks
+
+- Internal repetition (前后重复表述): near-identical sentences of similar length that appear twice in
+  the same paper (shingle containment >= 0.8). Common causes are the abstract copied into the
+  conclusion and chapter summaries repeating the introduction. This compares the paper with itself
+  only; it is not a similarity/plagiarism check against other sources.
+- Section breakdown: suspicious characters and weighted rate per section, ranked by contribution to
+  the overall rate, so the user knows which chapter to revise first.
+- Before/after comparison (`compare`): signal counts, uniform-rhythm passages, citation marks and
+  length before and after a revision. A revision that removes template phrases but adds uniform
+  rhythm or drops citations is flagged.

@@ -12,6 +12,10 @@ Required visible fields:
 - AI rate, suspicious AI rate, human-writing rate
 - Suspicious AI-writing character count and total character count
 - Fragment distribution
+- Section breakdown (`章节分布`), ranked by weighted contribution, at most 12 rows
+- Frequent writing patterns (`高频写作模式`) from deterministic signals, at most 10 rows
+- Repeated sentences (`前后重复表述`) when the scan found any, labelled as an in-document check
+  rather than a plagiarism result
 - A table with `原文内容` and `疑似AI写作率`
 - Each suspicious row should keep `AIGC值：0.xxx` in a stable text format
 - Reason notes may appear below the original text and must not replace the original content

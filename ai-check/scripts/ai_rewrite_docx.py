@@ -10,6 +10,11 @@ unchanged characters keep their original runs, so formatting (bold, superscript
 citation marks, fonts), equations, images, fields and bookmarks elsewhere in the
 paragraph survive. With ``--track-changes`` the edits are written as Word
 revisions (w:ins / w:del) that can be accepted or rejected in Word.
+
+Markdown (.md), LaTeX (.tex) and plain-text (.txt) sources are supported too: the
+replacement is spliced into a copy of the file and a unified diff is written next to
+it for review. LaTeX/Markdown markup such as cite/ref commands, $x$, links and
+footnotes must survive every rewrite.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from ai_check import iter_body_paragraph_elements, paragraph_units, w_tag  # noqa: E402
+from source_formats import TEXT_SUFFIXES  # noqa: E402
 
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 IGNORABLE_RE = re.compile(r"(?:\s| |​|‌|‍|⁠|⁣)")
@@ -106,8 +112,27 @@ def validate_replacement_citations(item: Replacement) -> list[str]:
     return missing
 
 
+PROTECTED_MARKUP_RE = re.compile(
+    r"\\(?:cite[a-zA-Z]*|parencite|textcite|autocite|ref|eqref|autoref|cref|Cref|label|url|href)\*?(?:\[[^\]]*\])*\{[^{}]*\}"
+    r"|(?<![\\$])\$[^$\n]+\$"  # inline math
+    r"|\[@[^\]]+\]|\[\^[^\]]+\]"  # pandoc citations, Markdown footnotes
+    r"|!?\[[^\]]*\]\([^)]*\)"  # Markdown links and images
+    r"|`[^`\n]+`"
+)
+
+
+def protected_markup(text: str) -> list[str]:
+    return list(dict.fromkeys(PROTECTED_MARKUP_RE.findall(text or "")))
+
+
+def validate_replacement_markup(item: Replacement) -> list[str]:
+    """LaTeX/Markdown references, math, links and code must be carried over verbatim."""
+    return [token for token in protected_markup(item.sourceText) if token not in item.replacementText]
+
+
 def number_tokens(text: str) -> set[str]:
-    return set(re.findall(r"\d+(?:\.\d+)?", CITATION_RE.sub(" ", text or "")))
+    # Citation keys and labels (\cite{li2023}) are not facts; markup is validated separately.
+    return set(re.findall(r"\d+(?:\.\d+)?", CITATION_RE.sub(" ", PROTECTED_MARKUP_RE.sub(" ", text or ""))))
 
 
 def validate_replacement_numbers(item: Replacement) -> list[str]:
@@ -399,6 +424,126 @@ def apply_to_paragraph(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Markdown / LaTeX / TXT sources
+# ---------------------------------------------------------------------------
+
+
+def is_text_source(path: Path) -> bool:
+    return path.suffix.lower() in TEXT_SUFFIXES
+
+
+def read_text_file(path: Path) -> str:
+    return path.read_text(encoding="utf-8-sig")
+
+
+def find_text_spans(content: str, source: str) -> list[tuple[int, int]]:
+    """All non-overlapping spans of ``source`` in ``content``: exact first, then ignoring whitespace."""
+    spans: list[tuple[int, int]] = []
+    start = content.find(source)
+    while start >= 0:
+        spans.append((start, start + len(source)))
+        start = content.find(source, start + len(source))
+    if spans:
+        return spans
+    needle = normalize_for_match(source)
+    if not needle:
+        return []
+    kept = [index for index, char in enumerate(content) if not IGNORABLE_RE.match(char)]
+    compact = "".join(content[index] for index in kept)
+    found = compact.find(needle)
+    while found >= 0:
+        spans.append((kept[found], kept[found + len(needle) - 1] + 1))
+        found = compact.find(needle, found + len(needle))
+    return spans
+
+
+def line_of(content: str, offset: int) -> int:
+    return content.count("\n", 0, offset) + 1
+
+
+def validate_item(item: Replacement) -> tuple[list[str], list[str], list[str]]:
+    return validate_replacement_citations(item), validate_replacement_numbers(item), validate_replacement_markup(item)
+
+
+def dry_run_text(source: Path, replacements_path: Path) -> dict[str, Any]:
+    content = read_text_file(source)
+    items = []
+    for item in normalize_replacements(load_json(replacements_path)):
+        spans = find_text_spans(content, item.sourceText)
+        missing_citations, missing_numbers, missing_markup = validate_item(item)
+        unique = len(spans) == 1 or (item.occurrence is not None and 1 <= item.occurrence <= len(spans))
+        items.append(
+            {
+                "chunkId": item.chunkId,
+                "matchCount": len(spans),
+                "missingCitations": missing_citations,
+                "missingNumbers": missing_numbers,
+                "missingMarkup": missing_markup,
+                "willApply": unique and not missing_citations and not missing_numbers and not missing_markup,
+                "matches": [{"line": line_of(content, start)} for start, _end in spans[:5]],
+            }
+        )
+    return {
+        "sourcePath": str(source.resolve()),
+        "replacementPath": str(replacements_path.resolve()),
+        "total": len(items),
+        "applicable": sum(1 for item in items if item["willApply"]),
+        "items": items,
+    }
+
+
+def skip_reason(item: Replacement, match_count: int) -> str:
+    missing_citations, missing_numbers, missing_markup = validate_item(item)
+    if missing_citations:
+        return f"missing citation marks: {', '.join(missing_citations)}"
+    if missing_markup:
+        return f"missing LaTeX/Markdown markup: {', '.join(missing_markup)}"
+    if missing_numbers:
+        return f"missing numbers: {', '.join(missing_numbers)} (set allowNumberChange only if the user approved it)"
+    if not match_count:
+        return "sourceText not found"
+    if item.occurrence is not None and (item.occurrence < 1 or item.occurrence > match_count):
+        return "occurrence out of range"
+    if item.occurrence is None and match_count > 1:
+        return "sourceText matched multiple places; set occurrence to apply deterministically"
+    return ""
+
+
+def apply_text(source: Path, replacements_path: Path, output: Path) -> dict[str, Any]:
+    original = read_text_file(source)
+    content = original
+    applied, skipped = [], []
+    for item in normalize_replacements(load_json(replacements_path)):
+        spans = find_text_spans(content, item.sourceText)
+        reason = skip_reason(item, len(spans))
+        if reason:
+            skipped.append({"chunkId": item.chunkId, "reason": reason})
+            continue
+        start, end = spans[(item.occurrence or 1) - 1]
+        content = content[:start] + item.replacementText + content[end:]
+        applied.append({"chunkId": item.chunkId, "line": line_of(content, start)})
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(content, encoding="utf-8", newline="")
+    diff_path = output.with_name(output.name + ".diff")
+    diff = difflib.unified_diff(
+        original.splitlines(keepends=True), content.splitlines(keepends=True), fromfile=source.name, tofile=output.name
+    )
+    diff_path.write_text("".join(diff), encoding="utf-8", newline="")
+    return {
+        "sourcePath": str(source.resolve()),
+        "outputPath": str(output.resolve()),
+        "diffPath": str(diff_path.resolve()),
+        "replacementPath": str(replacements_path.resolve()),
+        "trackChanges": False,
+        "appliedCount": len(applied),
+        "skippedCount": len(skipped),
+        "applied": applied,
+        "skipped": skipped,
+        "note": "Text source rewritten into a new file; review the .diff (or use git diff / latexdiff) before final use.",
+    }
+
+
 def open_document(path: Path) -> Any:
     try:
         from docx import Document  # type: ignore
@@ -408,6 +553,8 @@ def open_document(path: Path) -> Any:
 
 
 def dry_run(source_docx: Path, replacements_path: Path) -> dict[str, Any]:
+    if is_text_source(source_docx):
+        return dry_run_text(source_docx, replacements_path)
     document = open_document(source_docx)
     replacements = normalize_replacements(load_json(replacements_path))
     items = []
@@ -415,6 +562,7 @@ def dry_run(source_docx: Path, replacements_path: Path) -> dict[str, Any]:
         matches = find_matches(document, item)
         missing_citations = validate_replacement_citations(item)
         missing_numbers = validate_replacement_numbers(item)
+        missing_markup = validate_replacement_markup(item)
         unique = len(matches) == 1 or (item.occurrence is not None and 1 <= item.occurrence <= len(matches))
         items.append(
             {
@@ -422,7 +570,8 @@ def dry_run(source_docx: Path, replacements_path: Path) -> dict[str, Any]:
                 "matchCount": len(matches),
                 "missingCitations": missing_citations,
                 "missingNumbers": missing_numbers,
-                "willApply": unique and not missing_citations and not missing_numbers,
+                "missingMarkup": missing_markup,
+                "willApply": unique and not missing_citations and not missing_numbers and not missing_markup,
                 "matches": matches[:5],
             }
         )
@@ -447,6 +596,10 @@ def apply_replacements(
         return preview
     if output_docx.resolve() == source_docx.resolve():
         raise ValueError("--out must be a new file; AI-check never modifies the original DOCX in place")
+    if is_text_source(source_docx):
+        if output_docx.suffix.lower() != source_docx.suffix.lower():
+            raise ValueError(f"--out must keep the source extension {source_docx.suffix}")
+        return apply_text(source_docx, replacements_path, output_docx)
 
     replacements = normalize_replacements(load_json(replacements_path))
     skipped = []
@@ -469,6 +622,10 @@ def apply_replacements(
                     "reason": f"missing numbers: {', '.join(missing_numbers)} (set allowNumberChange only if the user approved it)",
                 }
             )
+            continue
+        missing_markup = validate_replacement_markup(item)
+        if missing_markup:
+            skipped.append({"chunkId": item.chunkId, "reason": f"missing LaTeX/Markdown markup: {', '.join(missing_markup)}"})
             continue
 
         matches = find_matches(document, item)
@@ -530,7 +687,7 @@ def command_apply(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Apply user-confirmed AI-check replacements to a new DOCX")
+    parser = argparse.ArgumentParser(description="Apply user-confirmed AI-check replacements to a new DOCX/Markdown/LaTeX/TXT file")
     sub = parser.add_subparsers(dest="command", required=True)
 
     dry = sub.add_parser("dry-run", help="validate replacement matching without writing DOCX")
@@ -542,9 +699,9 @@ def build_parser() -> argparse.ArgumentParser:
     apply = sub.add_parser("apply", help="apply replacements to a new DOCX")
     apply.add_argument("docx")
     apply.add_argument("replacements_json")
-    apply.add_argument("--out", required=True, help="new DOCX path (must differ from the source)")
+    apply.add_argument("--out", required=True, help="new output path with the same extension (must differ from the source)")
     apply.add_argument("--out-json", help="write apply summary JSON")
-    apply.add_argument("--track-changes", action="store_true", help="write edits as Word tracked changes (w:ins/w:del)")
+    apply.add_argument("--track-changes", action="store_true", help="DOCX only: write edits as Word tracked changes (w:ins/w:del)")
     apply.set_defaults(func=command_apply)
 
     return parser

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-check-skill"
-version = "0.2.0"
-description = "Codex/Claude Code skill for DOCX AI-rate reports, AI-writing reduction, and confirmed rewrites."
+version = "0.3.0"
+description = "Agent skill for AI-writing self-check reports on DOCX, Markdown and LaTeX papers, with confirmed rewrites."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

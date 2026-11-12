@@ -21,6 +21,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Literal
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from source_formats import HEADING_MARK, TEXT_SUFFIXES, read_text_source  # noqa: E402
+
 
 SectionType = Literal[
     "abstract",
@@ -64,12 +70,21 @@ TEMPLATE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("不言而喻", re.compile(r"不言而喻")),
     ("随着发展开头", re.compile(r"随着.{0,24}?的?(?:快速|飞速|迅猛|迅速|不断|持续|蓬勃)发展")),
     ("背景浪潮套语", re.compile(r"在.{0,20}?(?:大背景|背景|浪潮|时代)下")),
+    # 2025-2026 LLM habits: reframing contrast, role phrasing, "provides new ideas" closers, staged ranges
+    ("不是而是反转句", re.compile(r"(?:并非|不是|不只是|不仅仅是)[^。！？；\n]{1,30}?而是")),
+    ("扮演角色套语", re.compile(r"扮演(?:着)?[^。！？；]{0,8}?角色")),
+    ("提供新思路收束", re.compile(r"为[^。！？；]{0,30}?提供(?:了)?(?:新的|有益的|重要的|有效的|一种)?(?:思路|视角|参考|借鉴|启示|路径)")),
+    ("从到再到递进", re.compile(r"从[^。！？；]{1,12}?到[^。！？；]{1,12}?再到")),
     # English academic prose
     ("In conclusion/summary", re.compile(r"\b(?:in conclusion|in summary|to sum up|all in all)\b", re.I)),
     ("It is worth noting", re.compile(r"\bit is (?:worth noting|important to note|noteworthy) that\b", re.I)),
     ("not only…but also", re.compile(r"\bnot only\b[\s\S]{0,120}\bbut also\b", re.I)),
     ("Firstly/Secondly/Finally", re.compile(r"\bfirst(?:ly)?,[\s\S]{0,240}\bsecond(?:ly)?,[\s\S]{0,240}\b(?:finally|lastly|third(?:ly)?),", re.I)),
     ("In today's… opener", re.compile(r"\bin (?:today's|the modern|an era of|the rapidly evolving|the ever-evolving)\b", re.I)),
+    ("not just X, it's Y", re.compile(r"\b(?:it'?s|this is|is) not (?:just|merely|only|simply) (?:about )?[^.;]{1,80}?[,;—–-]\s*(?:but|it'?s|it is)\b", re.I)),
+    ("In the realm/landscape of", re.compile(r"\bin the (?:realm|landscape|ever-changing world|dynamic world) of\b", re.I)),
+    ("serves as a testament", re.compile(r"\bserves? as an? (?:testament|cornerstone|catalyst|stark reminder|powerful reminder)\b", re.I)),
+    ("highlights the importance", re.compile(r"\b(?:highlight|underscore|emphasi[sz]e)s? the (?:importance|need|significance|critical role)\b", re.I)),
 ]
 
 CONNECTORS = (
@@ -107,13 +122,17 @@ GENERIC_CLAIM_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("关键作用套话", re.compile(r"发挥(?:着)?.{0,6}(?:重要|关键|不可替代|积极)(?:的)?作用|至关重要|举足轻重")),
     ("支撑基础套话", re.compile(r"(?:提供|奠定)(?:了)?.{0,6}(?:有力|坚实|重要)(?:的)?(?:支撑|基础|保障)")),
     ("日益凸显套话", re.compile(r"日益(?:增长|突出|凸显|重要|广泛|迫切)|愈发(?:重要|突出)")),
+    ("参考价值套话", re.compile(r"具有一定的?(?:参考|借鉴|指导|应用)(?:价值|意义)")),
+    ("政务流行语", re.compile(r"抓手|提质增效|降本增效|全链条|多措并举|落地见效")),
     # English LLM-flavoured vocabulary; each hit is weak evidence only
     (
         "LLM 高频词",
         re.compile(
             r"\b(?:delve[sd]?|delving|tapestry|testament to|pivotal|underscor(?:e|es|ed|ing)|showcas(?:e|es|ed|ing)|"
             r"intricate|multifaceted|realm|seamless(?:ly)?|cutting-edge|ever-evolving|paving the way|"
-            r"shed(?:s|ding)? light on|navigat(?:e|es|ing) the complexities|game[- ]changer)\b",
+            r"shed(?:s|ding)? light on|navigat(?:e|es|ing) the complexities|game[- ]changer|"
+            r"foster(?:s|ed|ing)?|leverag(?:e|es|ed|ing)|holistic|nuanced|meticulous(?:ly)?|commendable|interplay|"
+            r"a myriad of|plethora|bolster(?:s|ed|ing)?|elucidat(?:e|es|ed|ing)|unveil(?:s|ed|ing)?|harness(?:es|ed|ing)?)\b",
             re.I,
         ),
     ),
@@ -129,7 +148,13 @@ METHOD_NAME_RE = re.compile(
 )
 
 EVIDENCE_MARKER_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("引用编号", re.compile(r"\[\d+(?:\s*[-–,，、]\s*\d+)*\]|\([A-Z][A-Za-z-]+(?: et al\.)?,? \d{4}[a-z]?\)")),
+    (
+        "引用编号",
+        re.compile(
+            r"\[\d+(?:\s*[-–,，、]\s*\d+)*\]|\([A-Z][A-Za-z-]+(?: et al\.)?,? \d{4}[a-z]?\)"
+            r"|\\(?:cite[a-zA-Z]*|parencite|textcite|autocite)\*?(?:\[[^\]]*\])*\{[^}]+\}|\[@[\w:.-]+"
+        ),
+    ),
     (
         "实验指标",
         re.compile(
@@ -167,6 +192,8 @@ class TraceFeatures:
     uniformSentenceRhythm: bool
     genericClaimCount: int
     evidenceMarkers: list[str]
+    repeatedOpeners: list[str]
+    unquantifiedClaimCount: int
 
 
 @dataclass
@@ -236,6 +263,40 @@ def split_sentences(text: str) -> list[str]:
     ]
 
 
+UNQUANTIFIED_CLAIM_RE = re.compile(
+    r"(?:显著|有效|大幅|明显|极大|充分)(?:地)?(?:提升|提高|改善|增强|降低|减少|优化|促进)"
+    r"|\b(?:significantly|substantially|greatly|dramatically|markedly|considerably) (?:improv|enhanc|reduc|boost|outperform|increas|decreas)",
+    re.I,
+)
+
+
+def sentence_opener(sentence: str) -> str:
+    """First word (Latin) or first two characters (CJK) of a sentence, for repetition checks."""
+    stripped = re.sub(r"^[\s\"“”'‘’(（\[【]+", "", sentence)
+    latin = re.match(r"[A-Za-z]+", stripped)
+    if latin:
+        return latin.group(0).lower()
+    cjk = re.match(r"[\u4e00-\u9fff]{2}", stripped)
+    return cjk.group(0) if cjk else ""
+
+
+def repeated_openers(sentences: list[str]) -> list[str]:
+    """Openers used by >= 3 sentences and >= 40% of the passage ("本文…本文…本文…")."""
+    if len(sentences) < 4:
+        return []
+    counts: dict[str, int] = {}
+    for sentence in sentences:
+        opener = sentence_opener(sentence)
+        if opener and opener not in ("the", "a", "an", "in", "it", "we"):
+            counts[opener] = counts.get(opener, 0) + 1
+    return [opener for opener, count in counts.items() if count >= 3 and count / len(sentences) >= 0.4]
+
+
+def unquantified_claims(sentences: list[str]) -> int:
+    """Sentences that claim a strong effect ("显著提升", "significantly improves") without any number."""
+    return sum(1 for sentence in sentences if UNQUANTIFIED_CLAIM_RE.search(sentence) and not re.search(r"\d", sentence))
+
+
 def pattern_count(text: str, pattern: re.Pattern[str]) -> int:
     return len(pattern.findall(text or ""))
 
@@ -272,6 +333,8 @@ def scan_trace_features(text: str) -> TraceFeatures:
         label for label, pattern in EVIDENCE_MARKER_PATTERNS if pattern.search(normalized)
     )
     method_names = {match.group(0) for match in METHOD_NAME_RE.finditer(normalized)}
+    openers = repeated_openers(sentences)
+    unquantified = unquantified_claims(sentences)
 
     risk_signals = [
         *(f"模板表达:{label}" for label in template_phrases),
@@ -288,6 +351,8 @@ def scan_trace_features(text: str) -> TraceFeatures:
         )
         else "",
         "目标表述泛化" if re.search(r"(?:旨在|力求|致力于).{0,40}(?:高效|可靠|可信|智能化|实用化)", normalized) else "",
+        f"句首重复:{'/'.join(openers)}" if openers else "",
+        "效果表述缺少数据" if unquantified else "",
     ]
 
     mitigating = [
@@ -315,6 +380,8 @@ def scan_trace_features(text: str) -> TraceFeatures:
         uniformSentenceRhythm=uniform,
         genericClaimCount=generic_count,
         evidenceMarkers=evidence_markers,
+        repeatedOpeners=openers,
+        unquantifiedClaimCount=unquantified,
     )
 
 
@@ -341,6 +408,13 @@ def looks_like_caption(text: str) -> bool:
     return count_chars(normalized) <= 60 and not SENTENCE_END_RE.search(normalized[:-1])
 
 
+# Personal or administrative back matter that is not judged as academic prose.
+NON_PROSE_SECTION_RE = re.compile(
+    r"(?:致\s*谢|谢辞|后记|作者简介|个人简历|攻读.{0,12}(?:成果|论文|学位期间.*)|Acknowledg(?:e)?ments?)[:：]?",
+    re.I,
+)
+
+
 def infer_section_type(text: str) -> SectionType:
     compact = re.sub(r"\s+", "", text or "")
     if re.fullmatch(r"目录|目次|TableofContents", compact, re.I):
@@ -351,8 +425,10 @@ def infer_section_type(text: str) -> SectionType:
         return "keywords"
     if re.match(r"^(结论|总结|结束语|展望|Conclusion)([:：].*)?$", compact, re.I):
         return "conclusion"
-    if re.match(r"^(参考文献|References)$", compact, re.I):
+    if re.match(r"^(参考文献|References|Bibliography)$", compact, re.I):
         return "references"
+    if NON_PROSE_SECTION_RE.fullmatch(compact):
+        return "other"
     if looks_like_numbered_heading(text):
         return "chapter_title"
     return "body"
@@ -367,7 +443,9 @@ def is_standalone_heading(text: str, section_type: SectionType) -> bool:
     if section_type == "conclusion":
         return bool(re.fullmatch(r"结论|总结|结束语|展望|Conclusion", compact, re.I))
     if section_type == "references":
-        return bool(re.fullmatch(r"参考文献|References", compact, re.I))
+        return bool(re.fullmatch(r"参考文献|References|Bibliography", compact, re.I))
+    if section_type == "other":
+        return bool(NON_PROSE_SECTION_RE.fullmatch(compact))
     return False
 
 
@@ -518,7 +596,15 @@ def build_chunks(text: str, max_chars: int = MAX_CHARS_PER_CHUNK) -> list[Chunk]
     in_toc = False
 
     for paragraph in paragraphs:
+        # Headings marked by the reader (Word heading styles, Markdown "#", LaTeX \section)
+        forced_heading = paragraph.startswith(HEADING_MARK.strip())
+        if forced_heading:
+            paragraph = paragraph[len(HEADING_MARK.strip()):].strip()
+            if not paragraph:
+                continue
         inferred = infer_section_type(paragraph)
+        if forced_heading and inferred == "body" and count_chars(paragraph) <= 80 and not SENTENCE_END_RE.search(paragraph[:-1]):
+            inferred = "chapter_title"
         compact = re.sub(r"\s+", "", paragraph)
 
         if re.fullmatch(r"目录|目次|TableofContents", compact, re.I):
@@ -539,11 +625,11 @@ def build_chunks(text: str, max_chars: int = MAX_CHARS_PER_CHUNK) -> list[Chunk]
 
         section_type = "keywords" if inferred == "body" and expect_keyword_payload else inferred if inferred != "body" else current_type
         standalone = is_standalone_heading(paragraph, inferred)
-        if standalone and inferred in ("abstract", "keywords", "conclusion", "references"):
+        if standalone and inferred in ("abstract", "keywords", "conclusion", "references", "other"):
             current_title = paragraph[:120]
             expect_keyword_payload = inferred == "keywords"
             current_type = "body" if inferred == "keywords" else inferred
-            if inferred in ("abstract", "conclusion", "references"):
+            if inferred in ("abstract", "conclusion", "references", "other"):
                 in_toc = False
             if inferred in ("abstract", "conclusion"):
                 before_main = False
@@ -640,6 +726,30 @@ def iter_body_paragraph_elements(document: Any, include_tables: bool = True) -> 
             yield paragraph_element
 
 
+def heading_style_ids(document: Any) -> set[str]:
+    """Style ids of Word heading styles ("Heading 1", "标题 1", localized ids such as "1")."""
+    ids: set[str] = set()
+    try:
+        for style in document.styles:
+            name = str(getattr(style, "name", "") or "")
+            if re.match(r"^(?:heading|标题)\s*[1-9]$", name, re.I):
+                ids.add(str(style.style_id))
+    except Exception:  # pragma: no cover - defensive against odd style parts
+        pass
+    return ids
+
+
+def is_heading_paragraph(paragraph_element: Any, heading_styles: set[str]) -> bool:
+    ppr = paragraph_element.find(w_tag("pPr"))
+    if ppr is None:
+        return False
+    style = ppr.find(w_tag("pStyle"))
+    if style is not None and style.get(w_tag("val")) in heading_styles:
+        return True
+    outline = ppr.find(w_tag("outlineLvl"))
+    return outline is not None and str(outline.get(w_tag("val"))) in {str(level) for level in range(9)}
+
+
 def read_docx_text(path: Path, include_tables: bool = False) -> tuple[str, dict[str, str]]:
     try:
         from docx import Document  # type: ignore
@@ -647,13 +757,15 @@ def read_docx_text(path: Path, include_tables: bool = False) -> tuple[str, dict[
         raise RuntimeError("python-docx is required for reading DOCX files: python -m pip install python-docx") from exc
 
     document = Document(str(path))
+    heading_styles = heading_style_ids(document)
     # Keep document order. Tables are structured data rather than prose, so they are skipped
     # by default instead of being appended after the references as before.
-    lines = [
-        text.strip()
-        for text in (paragraph_element_text(p) for p in iter_body_paragraph_elements(document, include_tables=include_tables))
-        if text.strip()
-    ]
+    lines: list[str] = []
+    for paragraph_element in iter_body_paragraph_elements(document, include_tables=include_tables):
+        text = paragraph_element_text(paragraph_element).strip()
+        if not text:
+            continue
+        lines.append(HEADING_MARK + text if is_heading_paragraph(paragraph_element, heading_styles) else text)
     props = document.core_properties
     metadata = {
         "title": (props.title or "").strip(),
@@ -689,12 +801,27 @@ def summarize_title(path: Path, text: str, explicit_title: str | None = None, me
     if metadata_title and metadata_title.strip():
         return metadata_title.strip()[:120]
     for line in normalize_paragraphs(text):
+        if line.startswith(HEADING_MARK.strip()):
+            break  # first styled heading: the body has started
         inferred = infer_section_type(line)
         if inferred in ("abstract", "chapter_title", "conclusion", "references"):
             break
         if is_probable_document_title(line):
             return line[:120]
     return path.stem or "untitled"
+
+
+SUPPORTED_SUFFIXES = {".docx", *TEXT_SUFFIXES}
+
+
+def read_source_text(path: Path, include_tables: bool = False) -> tuple[str, dict[str, str]]:
+    """Read .docx, .md/.markdown, .tex or .txt into one-paragraph-per-line text."""
+    suffix = path.suffix.lower()
+    if suffix == ".docx":
+        return read_docx_text(path, include_tables=include_tables)
+    if suffix in TEXT_SUFFIXES:
+        return read_text_source(path)
+    raise ValueError(f"unsupported file type {suffix or '(none)'}; use .docx, .md, .tex or .txt (save .doc as .docx first)")
 
 
 def scan_docx(
@@ -704,19 +831,131 @@ def scan_docx(
     max_chars: int = MAX_CHARS_PER_CHUNK,
     include_tables: bool = False,
 ) -> dict[str, Any]:
-    text, metadata = read_docx_text(path, include_tables=include_tables)
+    """Scan a DOCX, Markdown, LaTeX or TXT file (the name is kept for backwards compatibility)."""
+    text, metadata = read_source_text(path, include_tables=include_tables)
     chunks = build_chunks(text, max_chars=max_chars)
+    chunk_dicts = [chunk_to_dict(chunk) for chunk in chunks]
     return {
         "schemaVersion": 1,
         "tool": "AI-check",
         "sourcePath": str(path.resolve()),
+        "sourceFormat": path.suffix.lower().lstrip("."),
         "documentTitle": summarize_title(path, text, explicit_title=title, metadata_title=metadata.get("title")),
         "author": author or metadata.get("author") or "unknown",
         "createdAt": datetime.now().astimezone().isoformat(timespec="seconds"),
         "totalChars": sum(chunk.charCount for chunk in chunks),
         "chunking": {"maxCharsPerChunk": max_chars, "minReportChars": REPORT_FRAGMENT_MIN_CHARS},
-        "chunks": [chunk_to_dict(chunk) for chunk in chunks],
+        "chunks": chunk_dicts,
+        "internalRepetition": find_internal_repetition(chunk_dicts),
     }
+
+
+REPETITION_MIN_CHARS = 24
+REPETITION_SHINGLE = 6
+REPETITION_THRESHOLD = 0.8
+REPETITION_MAX_PAIRS = 40
+
+
+def _repetition_key(sentence: str) -> str:
+    return re.sub(r"[\W_]+", "", sentence.lower())
+
+
+def find_internal_repetition(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Near-identical sentences that appear twice in the same document.
+
+    Typical causes: the abstract copied into the conclusion, chapter summaries repeating the
+    introduction, or the same LLM-drafted claim pasted into several sections. This is an
+    in-document check only; it is not a plagiarism/similarity check against other sources.
+    Similarity is shingle containment between sentences of comparable length (ratio >= 0.5).
+    """
+    sentences: list[tuple[dict[str, Any], str, set[str]]] = []
+    for chunk in chunks:
+        for sentence in split_sentences(str(chunk.get("text") or "")):
+            key = _repetition_key(sentence)
+            if len(key) < REPETITION_MIN_CHARS:
+                continue
+            shingles = {key[i : i + REPETITION_SHINGLE] for i in range(len(key) - REPETITION_SHINGLE + 1)}
+            sentences.append((chunk, sentence, shingles))
+
+    index: dict[str, list[int]] = {}
+    for position, (_chunk, _sentence, shingles) in enumerate(sentences):
+        for shingle in shingles:
+            index.setdefault(shingle, []).append(position)
+
+    shared: dict[tuple[int, int], int] = {}
+    for positions in index.values():
+        if len(positions) < 2 or len(positions) > 40:  # very common shingles carry no signal
+            continue
+        for i, left in enumerate(positions):
+            for right in positions[i + 1 :]:
+                shared[(left, right)] = shared.get((left, right), 0) + 1
+
+    pairs: list[dict[str, Any]] = []
+    used: set[int] = set()
+    for (left, right), count in sorted(shared.items(), key=lambda item: -item[1]):
+        a_chunk, a_text, a_sh = sentences[left]
+        b_chunk, b_text, b_sh = sentences[right]
+        similarity = len(a_sh & b_sh) / max(1, min(len(a_sh), len(b_sh)))
+        length_ratio = min(len(a_sh), len(b_sh)) / max(1, max(len(a_sh), len(b_sh)))
+        if similarity < REPETITION_THRESHOLD or length_ratio < 0.5 or right in used:
+            continue
+        used.add(right)
+        pairs.append(
+            {
+                "similarity": round(similarity, 3),
+                "chars": min(count_chars(a_text), count_chars(b_text)),
+                "first": {"chunkId": a_chunk.get("chunkId"), "sectionTitle": a_chunk.get("sectionTitle"), "text": a_text},
+                "second": {"chunkId": b_chunk.get("chunkId"), "sectionTitle": b_chunk.get("sectionTitle"), "text": b_text},
+            }
+        )
+    pairs.sort(key=lambda pair: (str(pair["first"]["chunkId"]), str(pair["second"]["chunkId"])))
+    return pairs[:REPETITION_MAX_PAIRS]
+
+
+SECTION_LABELS = {"abstract": "摘要", "conclusion": "结论", "body": "正文"}
+
+
+def section_label(chunk: dict[str, Any]) -> str:
+    title = str(chunk.get("sectionTitle") or "").strip()
+    return title or SECTION_LABELS.get(str(chunk.get("sectionType") or ""), "正文")
+
+
+def section_breakdown(scan: dict[str, Any], rows: list[dict[str, Any]], limit: int = 12) -> list[dict[str, Any]]:
+    """Per-section character totals and weighted AI rate, ordered by contribution to the overall rate."""
+    sections: dict[str, dict[str, Any]] = {}
+    for order, chunk in enumerate(scan.get("chunks", [])):
+        label = section_label(chunk)
+        entry = sections.setdefault(label, {"section": label, "order": order, "chars": 0, "suspiciousChars": 0, "weighted": 0.0, "fragments": 0})
+        entry["chars"] += int(chunk.get("charCount") or count_chars(str(chunk.get("text") or "")))
+    for row in rows:
+        entry = sections.get(section_label(row["chunk"]))
+        if entry is None:
+            continue
+        chars = count_chars(row["text"])
+        entry["suspiciousChars"] += chars
+        entry["weighted"] += chars * row["result"].aigcValue
+        entry["fragments"] += 1
+    ranked = sorted((entry for entry in sections.values() if entry["fragments"]), key=lambda entry: (-entry["weighted"], entry["order"]))
+    return [
+        {
+            "section": entry["section"],
+            "chars": entry["chars"],
+            "suspiciousChars": entry["suspiciousChars"],
+            "aiRate": round(entry["weighted"] / max(1, entry["chars"]), 4),
+            "fragments": entry["fragments"],
+        }
+        for entry in ranked[:limit]
+    ]
+
+
+def signal_stats(scan: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
+    """How many chunks show each deterministic risk signal, most frequent first."""
+    counts: dict[str, list[str]] = {}
+    for chunk in scan.get("chunks", []):
+        for signal in (chunk.get("traceFeatures") or {}).get("riskSignals") or []:
+            counts.setdefault(str(signal), []).append(str(chunk.get("chunkId") or ""))
+    ranked = sorted(counts.items(), key=lambda item: (-len(item[1]), item[0]))
+    return [{"signal": signal, "chunks": len(ids), "examples": ids[:3]} for signal, ids in ranked[:limit]]
 
 
 def chunk_to_dict(chunk: Chunk) -> dict[str, Any]:
@@ -890,7 +1129,51 @@ def calculate_summary(scan: dict[str, Any], rows: list[dict[str, Any]]) -> dict[
         "suspiciousChars": suspicious_chars,
         "totalChars": total_chars,
         "fragmentCount": len(rows),
+        "sectionBreakdown": section_breakdown(scan, rows),
+        "topSignals": signal_stats(scan),
+        "internalRepetition": list(scan.get("internalRepetition") or []),
     }
+
+
+def html_extra_sections(summary: dict[str, Any]) -> str:
+    parts: list[str] = []
+    sections = summary.get("sectionBreakdown") or []
+    if sections:
+        body = "\n".join(
+            f"<tr><td>{html.escape(str(item['section']))}</td><td>{item['chars']}</td><td>{item['suspiciousChars']}</td>"
+            f"<td class=\"num\">{percent(item['aiRate'])}</td></tr>"
+            for item in sections
+        )
+        parts.append(
+            '  <div class="section-title">章节分布（按对全文 AI 率的贡献排序）</div>\n'
+            '  <table class="mini"><thead><tr><th>章节</th><th>字数</th><th>疑似字数</th><th>章节AI率</th></tr></thead>'
+            f"<tbody>{body}</tbody></table>"
+        )
+    signals = summary.get("topSignals") or []
+    if signals:
+        body = "\n".join(
+            f"<tr><td>{html.escape(str(item['signal']))}</td><td>{item['chunks']}</td><td>{html.escape('、'.join(item['examples']))}</td></tr>"
+            for item in signals
+        )
+        parts.append(
+            '  <div class="section-title">高频写作模式（脚本统计，供改写参考）</div>\n'
+            '  <table class="mini"><thead><tr><th>信号</th><th>出现片段数</th><th>示例片段</th></tr></thead>'
+            f"<tbody>{body}</tbody></table>"
+        )
+    repetition = summary.get("internalRepetition") or []
+    if repetition:
+        body = "\n".join(
+            f"<tr><td>{html.escape(str(item['first']['text']))}<div class=\"reason\">{html.escape(str(item['first'].get('sectionTitle') or ''))}</div></td>"
+            f"<td>{html.escape(str(item['second']['text']))}<div class=\"reason\">{html.escape(str(item['second'].get('sectionTitle') or ''))}</div></td>"
+            f"<td class=\"num\">{percent(item['similarity'])}</td></tr>"
+            for item in repetition
+        )
+        parts.append(
+            f'  <div class="section-title">前后重复表述（{len(repetition)} 处，仅同文比对，不是查重结果）</div>\n'
+            '  <table class="mini"><thead><tr><th style="width:44%">首次出现</th><th style="width:44%">再次出现</th><th>相似度</th></tr></thead>'
+            f"<tbody>{body}</tbody></table>"
+        )
+    return "\n".join(parts)
 
 
 def render_html(scan: dict[str, Any], rows: list[dict[str, Any]], summary: dict[str, Any]) -> str:
@@ -939,6 +1222,9 @@ def render_html(scan: dict[str, Any], rows: list[dict[str, Any]], summary: dict[
     .reason {{ margin-top: 1.6mm; color: #6b7280; font-size: 10.5px; line-height: 1.45; }}
     td.score {{ width: 24%; color: #d93025; white-space: nowrap; font-weight: 700; }}
     .notes {{ margin-top: 7mm; color: #4b5563; }}
+    table.mini {{ margin-bottom: 5mm; }}
+    table.mini td {{ word-break: break-all; }}
+    table.mini td.num {{ white-space: nowrap; color: #d93025; font-weight: 700; }}
     .site-link {{ color: #1a73e8; text-decoration: underline; }}
   </style>
 </head>
@@ -962,6 +1248,8 @@ def render_html(scan: dict[str, Any], rows: list[dict[str, Any]], summary: dict[
   </section>
   <div class="section-title">疑似片段分布图</div>
   <section class="distribution">{distribution}</section>
+{html_extra_sections(summary)}
+  <div class="section-title">原文内容 / 疑似AI写作率</div>
   <table>
     <thead><tr><th style="width:76%">原文内容</th><th style="width:24%">疑似AI写作率</th></tr></thead>
     <tbody>{table_rows}</tbody>
@@ -1168,7 +1456,7 @@ def render_pdf(path: Path, scan: dict[str, Any], rows: list[dict[str, Any]], sum
             pill("AIGC 写作检测", blue_dark, colors.white),
             Spacer(1, 2.5 * mm),
             Paragraph("AI-check / EasyIdea 论文AI率检测报告", title_style),
-            Paragraph("独立 DOCX 解析生成 · 可选择文本 PDF · 结果仅供参考", subtitle_style),
+            Paragraph("独立解析 DOCX / Markdown / LaTeX · 可选择文本 PDF · 结果仅供参考", subtitle_style),
             Spacer(1, 3 * mm),
             meta_table,
         ]
@@ -1251,6 +1539,60 @@ def render_pdf(path: Path, scan: dict[str, Any], rows: list[dict[str, Any]], sum
         )
         return table
 
+    def mini_table(header: list[str], data: list[list[Any]], widths: list[float]) -> LongTable:
+        cells = [[paragraph(text, table_header_style) for text in header], *data]
+        table = LongTable(cells, colWidths=[doc.width * width for width in widths], repeatRows=1, hAlign="LEFT", splitByRow=1)
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), soft_blue),
+                    ("BOX", (0, 0), (-1, -1), 0.45, border),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#E5EAF1")),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
+        )
+        return table
+
+    def extra_pdf_sections() -> list[Any]:
+        out: list[Any] = []
+        sections = summary.get("sectionBreakdown") or []
+        if sections:
+            data = [
+                [paragraph(item["section"], body_style), paragraph(item["chars"], score_style), paragraph(item["suspiciousChars"], score_style), paragraph(percent(item["aiRate"]), score_style)]
+                for item in sections
+            ]
+            out += [section_title("章节分布（按对全文 AI 率的贡献排序）"), Spacer(1, 3 * mm), mini_table(["章节", "字数", "疑似字数", "章节AI率"], data, [0.52, 0.14, 0.16, 0.18]), Spacer(1, 6 * mm)]
+        signals = summary.get("topSignals") or []
+        if signals:
+            data = [
+                [paragraph(item["signal"], body_style), paragraph(item["chunks"], score_style), paragraph("、".join(item["examples"]), reason_style)]
+                for item in signals
+            ]
+            out += [section_title("高频写作模式（脚本统计，供改写参考）"), Spacer(1, 3 * mm), mini_table(["信号", "出现片段数", "示例片段"], data, [0.5, 0.16, 0.34]), Spacer(1, 6 * mm)]
+        repetition = summary.get("internalRepetition") or []
+        if repetition:
+            data = []
+            for item in repetition:
+                first = [paragraph(item["first"]["text"], body_style)]
+                second = [paragraph(item["second"]["text"], body_style)]
+                if item["first"].get("sectionTitle"):
+                    first += [Spacer(1, 2), paragraph(item["first"]["sectionTitle"], reason_style)]
+                if item["second"].get("sectionTitle"):
+                    second += [Spacer(1, 2), paragraph(item["second"]["sectionTitle"], reason_style)]
+                data.append([first, second, paragraph(percent(item["similarity"]), score_style)])
+            out += [
+                section_title(f"前后重复表述（{len(repetition)} 处，仅同文比对，不是查重结果）"),
+                Spacer(1, 3 * mm),
+                mini_table(["首次出现", "再次出现", "相似度"], data, [0.43, 0.43, 0.14]),
+                Spacer(1, 6 * mm),
+            ]
+        return out
+
     detection_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     title = str(scan.get("documentTitle") or "untitled")
     author = str(scan.get("author") or "unknown")
@@ -1275,6 +1617,7 @@ def render_pdf(path: Path, scan: dict[str, Any], rows: list[dict[str, Any]], sum
         Spacer(1, 2 * mm),
         paragraph("柱形越高表示 AIGC 值越高，颜色由绿到红代表风险升高。", note_style),
         Spacer(1, 6 * mm),
+        *extra_pdf_sections(),
         section_title(f"原文内容 / 疑似AI写作率（{summary['fragmentCount']} 段）"),
         Spacer(1, 3 * mm),
     ]
@@ -1387,12 +1730,84 @@ def generate_report(scan_path: Path, results_path: Path, out_dir: Path) -> dict[
     return output
 
 
+CITATION_COUNT_RE = EVIDENCE_MARKER_PATTERNS[0][1]
+
+
+def scan_stats(scan: dict[str, Any]) -> dict[str, Any]:
+    chunks = scan.get("chunks", [])
+    signals: dict[str, int] = {}
+    for chunk in chunks:
+        for signal in (chunk.get("traceFeatures") or {}).get("riskSignals") or []:
+            signals[str(signal)] = signals.get(str(signal), 0) + 1
+    densities = [float((chunk.get("traceFeatures") or {}).get("connectorDensity") or 0) for chunk in chunks]
+    return {
+        "chunks": len(chunks),
+        "totalChars": int(scan.get("totalChars") or 0),
+        "riskSignalTotal": sum(signals.values()),
+        "riskSignals": signals,
+        "uniformRhythmChunks": sum(1 for chunk in chunks if (chunk.get("traceFeatures") or {}).get("uniformSentenceRhythm")),
+        "meanConnectorDensity": round(sum(densities) / len(densities), 3) if densities else 0.0,
+        "citationMarks": sum(len(CITATION_COUNT_RE.findall(str(chunk.get("text") or ""))) for chunk in chunks),
+        "internalRepetition": len(scan.get("internalRepetition") or []),
+    }
+
+
+def compare_scans(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    """Deterministic before/after self-check for a revision. Not a detector score."""
+    old, new = scan_stats(before), scan_stats(after)
+    labels = sorted(set(old["riskSignals"]) | set(new["riskSignals"]))
+    changes = [
+        {"signal": label, "before": old["riskSignals"].get(label, 0), "after": new["riskSignals"].get(label, 0)}
+        for label in labels
+        if old["riskSignals"].get(label, 0) != new["riskSignals"].get(label, 0)
+    ]
+    changes.sort(key=lambda item: item["after"] - item["before"])
+    warnings: list[str] = []
+    if new["uniformRhythmChunks"] > old["uniformRhythmChunks"]:
+        warnings.append("改写后句式均匀的片段变多：改写可能把文字改得更“顺”，反而更像模板。")
+    if new["riskSignalTotal"] > old["riskSignalTotal"]:
+        warnings.append("改写后风险信号总数增加，请检查新引入的套话或连接词。")
+    if new["citationMarks"] < old["citationMarks"]:
+        warnings.append(f"引用标记从 {old['citationMarks']} 个减少到 {new['citationMarks']} 个，请确认没有丢失引用。")
+    if old["totalChars"] and new["totalChars"] < old["totalChars"] * 0.85:
+        warnings.append("正文字数减少超过 15%，请确认没有删掉实质内容。")
+    if new["internalRepetition"] > old["internalRepetition"]:
+        warnings.append("前后重复表述变多。")
+    return {
+        "before": {key: value for key, value in old.items() if key != "riskSignals"} | {"sourcePath": before.get("sourcePath")},
+        "after": {key: value for key, value in new.items() if key != "riskSignals"} | {"sourcePath": after.get("sourcePath")},
+        "signalChanges": changes,
+        "warnings": warnings,
+        "note": "脚本信号对比，仅用于检查改写是否真正去掉了模板化写法；不是任何检测平台的分数。",
+    }
+
+
+def load_or_scan(path: Path, include_tables: bool = False) -> dict[str, Any]:
+    if path.suffix.lower() == ".json":
+        return load_json(path)
+    return scan_docx(path, include_tables=include_tables)
+
+
+def command_compare(args: argparse.Namespace) -> int:
+    output = compare_scans(load_or_scan(Path(args.before), args.include_tables), load_or_scan(Path(args.after), args.include_tables))
+    if args.out:
+        write_json(Path(args.out), output)
+    print(json.dumps(output, ensure_ascii=False, indent=2))
+    return 0
+
+
 def command_scan(args: argparse.Namespace) -> int:
     source = Path(args.docx)
     data = scan_docx(source, title=args.title, author=args.author, max_chars=args.max_chars, include_tables=args.include_tables)
     if args.out:
         write_json(Path(args.out), data)
-    print(json.dumps(data if not args.out else {"scanPath": str(Path(args.out).resolve()), "chunks": len(data["chunks"]), "totalChars": data["totalChars"]}, ensure_ascii=False, indent=2))
+    brief = {
+        "scanPath": str(Path(args.out).resolve()) if args.out else "",
+        "chunks": len(data["chunks"]),
+        "totalChars": data["totalChars"],
+        "internalRepetition": len(data["internalRepetition"]),
+    }
+    print(json.dumps(data if not args.out else brief, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -1414,8 +1829,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AI-check deterministic DOCX scanner and report generator")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    scan = sub.add_parser("scan", help="read DOCX and write chunk/traceFeatures JSON")
-    scan.add_argument("docx", help="source DOCX path")
+    scan = sub.add_parser("scan", help="read DOCX/Markdown/LaTeX/TXT and write chunk/traceFeatures JSON")
+    scan.add_argument("docx", help="source .docx, .md, .tex or .txt path")
     scan.add_argument("--out", help="output scan JSON path")
     scan.add_argument("--title", help="override document title")
     scan.add_argument("--author", help="override author")
@@ -1428,6 +1843,13 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("results_json", help="assistant-provided results JSON path")
     report.add_argument("--out-dir", required=True, help="output directory")
     report.set_defaults(func=command_report)
+
+    compare = sub.add_parser("compare", help="compare deterministic signals before and after a revision")
+    compare.add_argument("before", help="original document or its scan JSON")
+    compare.add_argument("after", help="revised document or its scan JSON")
+    compare.add_argument("--out", help="write comparison JSON")
+    compare.add_argument("--include-tables", action="store_true")
+    compare.set_defaults(func=command_compare)
 
     features = sub.add_parser("features", help="scan deterministic trace features for text")
     features.add_argument("text", nargs="?", default="", help="text to scan")
