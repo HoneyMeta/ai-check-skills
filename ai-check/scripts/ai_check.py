@@ -835,7 +835,13 @@ def scan_docx(
     text, metadata = read_source_text(path, include_tables=include_tables)
     chunks = build_chunks(text, max_chars=max_chars)
     chunk_dicts = [chunk_to_dict(chunk) for chunk in chunks]
+    extra: dict[str, Any] = {}
+    if metadata.get("includedFiles"):
+        extra["includedFiles"] = list(metadata["includedFiles"])
+    if metadata.get("missingIncludes"):
+        extra["missingIncludes"] = list(metadata["missingIncludes"])
     return {
+        **extra,
         "schemaVersion": 1,
         "tool": "AI-check",
         "sourcePath": str(path.resolve()),
@@ -1698,7 +1704,11 @@ def render_pdf(path: Path, scan: dict[str, Any], rows: list[dict[str, Any]], sum
     doc.build(story, onFirstPage=draw_page, onLaterPages=draw_page)
 
 
-def generate_report(scan_path: Path, results_path: Path, out_dir: Path) -> dict[str, Any]:
+def annotated_docx_name(source: Path) -> str:
+    return f"{source.stem}.AI-check-comments.docx"
+
+
+def generate_report(scan_path: Path, results_path: Path, out_dir: Path, annotate: bool = True) -> dict[str, Any]:
     scan = load_json(scan_path)
     results = normalize_results(load_json(results_path))
     rows = get_report_rows(scan, results)
@@ -1717,8 +1727,22 @@ def generate_report(scan_path: Path, results_path: Path, out_dir: Path) -> dict[
         pdf_error = str(exc)
         pdf_path = Path("")
 
+    annotated_path, annotate_error, comment_count = "", "", 0
+    source = Path(str(scan.get("sourcePath") or ""))
+    if annotate and str(scan.get("sourceFormat") or "") == "docx" and source.is_file():
+        try:
+            from docx_annotate import annotate_docx
+
+            annotated = annotate_docx(source, scan, results, out_dir / annotated_docx_name(source))
+            annotated_path, comment_count = annotated["annotatedPath"], annotated["commentCount"]
+        except Exception as exc:
+            annotate_error = str(exc)
+
     output = {
         **summary,
+        "annotatedDocxPath": annotated_path,
+        "annotatedComments": comment_count,
+        "annotateError": annotate_error,
         "htmlPath": str(html_path.resolve()),
         "pdfPath": str(pdf_path.resolve()) if str(pdf_path) else "",
         "pdfError": pdf_error,
@@ -1807,13 +1831,27 @@ def command_scan(args: argparse.Namespace) -> int:
         "totalChars": data["totalChars"],
         "internalRepetition": len(data["internalRepetition"]),
     }
+    for key in ("includedFiles", "missingIncludes"):
+        if data.get(key):
+            brief[key] = data[key]
     print(json.dumps(data if not args.out else brief, ensure_ascii=False, indent=2))
     return 0
 
 
 def command_report(args: argparse.Namespace) -> int:
-    output = generate_report(Path(args.scan_json), Path(args.results_json), Path(args.out_dir))
+    output = generate_report(Path(args.scan_json), Path(args.results_json), Path(args.out_dir), annotate=not args.no_annotate)
     print(json.dumps(output, ensure_ascii=False, indent=2))
+    return 0
+
+
+def command_annotate(args: argparse.Namespace) -> int:
+    from docx_annotate import annotate_docx
+
+    scan = load_json(Path(args.scan_json))
+    source = Path(args.source or str(scan.get("sourcePath") or ""))
+    output = Path(args.out) if args.out else source.with_name(annotated_docx_name(source))
+    result = annotate_docx(source, scan, normalize_results(load_json(Path(args.results_json))), output)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -1842,7 +1880,15 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("scan_json", help="scan JSON path")
     report.add_argument("results_json", help="assistant-provided results JSON path")
     report.add_argument("--out-dir", required=True, help="output directory")
+    report.add_argument("--no-annotate", action="store_true", help="DOCX: do not write the copy with one Word comment per flagged passage")
     report.set_defaults(func=command_report)
+
+    annotate = sub.add_parser("annotate", help="DOCX: write a copy with one Word comment (批注) per flagged passage")
+    annotate.add_argument("scan_json", help="scan JSON path")
+    annotate.add_argument("results_json", help="assistant-provided results JSON path")
+    annotate.add_argument("--out", help="output .docx (default: <source>.AI-check-comments.docx next to the source)")
+    annotate.add_argument("--source", help="source .docx (default: sourcePath in the scan JSON)")
+    annotate.set_defaults(func=command_annotate)
 
     compare = sub.add_parser("compare", help="compare deterministic signals before and after a revision")
     compare.add_argument("before", help="original document or its scan JSON")
@@ -1859,7 +1905,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def use_utf8_output() -> None:
+    """JSON and help text contain Chinese; never crash on a cp1252/cp437 console or pipe."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):  # pragma: no cover - replaced or detached streams
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    use_utf8_output()
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

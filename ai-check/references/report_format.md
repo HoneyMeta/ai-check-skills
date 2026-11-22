@@ -32,3 +32,16 @@ PDF layout requirements:
   a bounded distribution chart, repeated table headers across pages, and page-number footer.
 - Avoid absolute-position body text for the report table; long fragments must wrap naturally and
   split across pages without overlapping the score column or footer.
+
+Annotated Word copy (DOCX sources, written by `report` unless `--no-annotate`):
+
+- File name `<source stem>.AI-check-comments.docx` in the report folder; the source DOCX is never
+  modified.
+- One Word comment per flagged chunk, anchored on exactly the flagged sentences (runs are split at the
+  boundaries; text and formatting stay as they were). Author `AI-check`.
+- Comment text: `AI-check 参考值 xx.x%（verdict）`, then `原因：…` and `信号：…`; the first comment also
+  says the result is a writing-quality reference, not a CNKI/VIP/Turnitin result.
+
+Batch summary (`ai_batch.py report`): `batch-summary.html`, `batch-summary.csv` (UTF-8 with BOM so
+Excel shows Chinese correctly) and `batch-summary.json`, one row per document sorted by reference AI
+rate, with relative links to each document's report folder.

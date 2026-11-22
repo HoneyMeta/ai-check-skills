@@ -151,8 +151,150 @@ def _plain_latex(value: str) -> str:
     return re.sub(r"\s+", " ", value.replace("{", "").replace("}", "")).strip()
 
 
+# \input{x}, \include{x}, \subfile{x}, \import{dir/}{x}, \subimport{dir/}{x} (also starred forms)
+LATEX_INCLUDE_RE = re.compile(
+    r"\\(input|include|subfile|import|subimport|inputfrom|subinputfrom|includefrom|subincludefrom)\*?\s*"
+    r"(?:\{([^{}]*)\}\s*)?\{([^{}]+)\}"
+)
+LATEX_TWO_ARG_INCLUDES = {"import", "subimport", "inputfrom", "subinputfrom", "includefrom", "subincludefrom"}
+LATEX_MAX_INCLUDE_DEPTH = 12
+
+
+def _read_tex(path: Path) -> str:
+    return path.read_text(encoding="utf-8-sig", errors="replace")
+
+
+def resolve_latex_include(directory: Path, name: str) -> Path | None:
+    """Resolve an include target the way LaTeX does: as given, then with .tex appended."""
+    name = name.strip().strip('"')
+    if not name:
+        return None
+    candidate = Path(name)
+    if not candidate.is_absolute():
+        candidate = directory / candidate
+    for option in (candidate, candidate.with_name(candidate.name + ".tex")):
+        if option.is_file():
+            return option.resolve()
+    return None
+
+
+def latex_include_targets(content: str, base_dir: Path, file_dir: Path) -> list[tuple[int, int, Path | None, str]]:
+    """(start, end, resolved path or None, raw name) for every include command in comment-free ``content``.
+
+    \\input and \\include resolve against the main file's folder (LaTeX runs there), \\import{dir}{file}
+    against ``dir``, and \\subimport / \\subfile against the including file's folder. Only .tex files (or
+    names without an extension) are followed: \\input{fig.tikz} is not prose.
+    """
+    targets: list[tuple[int, int, Path | None, str]] = []
+    for match in LATEX_INCLUDE_RE.finditer(content):
+        command, folder, name = match.group(1), match.group(2), match.group(3)
+        two_args = command in LATEX_TWO_ARG_INCLUDES
+        if two_args != (folder is not None):
+            continue
+        suffix = Path(name.strip()).suffix.lower()
+        if suffix and suffix != ".tex":
+            continue
+        if command in ("import", "inputfrom", "includefrom"):
+            root = Path(folder.strip())
+            directory = root if root.is_absolute() else base_dir / root
+        elif two_args:
+            directory = file_dir / folder.strip()
+        elif command == "subfile":
+            directory = file_dir
+        else:
+            directory = base_dir
+        targets.append((match.start(), match.end(), resolve_latex_include(directory, name), name.strip()))
+    return targets
+
+
+def _document_body(content: str) -> str:
+    """A \\subfile carries its own preamble and document environment; only the body is included."""
+    begin = content.find("\\begin{document}")
+    if begin < 0:
+        return content
+    body = content[begin + len("\\begin{document}"):]
+    end = body.find("\\end{document}")
+    return body[:end] if end >= 0 else body
+
+
+def expand_latex_includes(path: Path, missing: list[str] | None = None, files: list[Path] | None = None) -> str:
+    """Comment-free source of ``path`` with every included .tex file spliced in at its include command.
+
+    ``files`` receives the main file and every included file in reading order; ``missing`` receives
+    include targets that were not found. Include cycles and very deep nesting are cut off.
+    """
+    main = path.resolve()
+    base_dir = main.parent
+    files = files if files is not None else []
+    missing = missing if missing is not None else []
+
+    def expand(current: Path, stack: tuple[Path, ...]) -> str:
+        if current not in files:
+            files.append(current)
+        content = _strip_latex_comments(_read_tex(current))
+        out: list[str] = []
+        last = 0
+        for start, end, target, name in latex_include_targets(content, base_dir, current.parent):
+            out.append(content[last:start])
+            last = end
+            if target is None:
+                missing.append(name)
+                continue
+            if target in stack or len(stack) > LATEX_MAX_INCLUDE_DEPTH:
+                continue
+            body = expand(target, stack + (target,))
+            if content.startswith("\\subfile", start):
+                body = _document_body(body)
+            out.append("\n" + body + "\n")  # an included file starts and ends a paragraph
+        out.append(content[last:])
+        return "".join(out)
+
+    return expand(main, (main,))
+
+
+def latex_project_files(path: Path) -> list[Path]:
+    """The main .tex file followed by every .tex file it includes, in reading order."""
+    files: list[Path] = []
+    expand_latex_includes(path, files=files)
+    return files
+
+
+def latex_project_tree(path: Path) -> list[tuple[Path, tuple[int, ...]]]:
+    """Every file of a LaTeX project with a sort key for reading order.
+
+    The key is the chain of line numbers of the include commands that lead to the file (empty for the
+    main file). A text position at ``line`` in that file sorts as ``key + (line, offset)``, so matches
+    spread over several files can be put in the order a reader meets them.
+    """
+    main = path.resolve()
+    base_dir = main.parent
+    tree: list[tuple[Path, tuple[int, ...]]] = []
+
+    def walk(current: Path, key: tuple[int, ...], stack: tuple[Path, ...]) -> None:
+        if any(item == current for item, _key in tree):
+            return
+        tree.append((current, key))
+        content = _strip_latex_comments(_read_tex(current))
+        for start, _end, target, _name in latex_include_targets(content, base_dir, current.parent):
+            if target is None or target in stack or len(stack) > LATEX_MAX_INCLUDE_DEPTH:
+                continue
+            walk(target, key + (content.count("\n", 0, start) + 1,), stack + (target,))
+
+    walk(main, (), (main,))
+    return tree
+
+
+def _relative_label(item: Path, root: Path) -> str:
+    try:
+        return item.relative_to(root).as_posix()
+    except ValueError:
+        return str(item)
+
+
 def read_latex_text(path: Path) -> tuple[str, dict[str, str]]:
-    raw = _strip_latex_comments(path.read_text(encoding="utf-8-sig", errors="replace"))
+    missing: list[str] = []
+    files: list[Path] = []
+    raw = expand_latex_includes(path, missing=missing, files=files)
     metadata = {
         "title": _plain_latex(_braced(raw, "title")),
         "author": _plain_latex(_braced(raw, "author")),
@@ -223,6 +365,11 @@ def read_latex_text(path: Path) -> tuple[str, dict[str, str]]:
             continue
         buffer.append(line)
     flush()
+    if len(files) > 1:
+        root = path.resolve().parent
+        metadata["includedFiles"] = [_relative_label(item, root) for item in files[1:]]
+    if missing:
+        metadata["missingIncludes"] = sorted(set(missing))
     return "\n".join(paragraphs), metadata
 
 

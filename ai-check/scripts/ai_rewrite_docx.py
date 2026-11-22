@@ -36,7 +36,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from ai_check import iter_body_paragraph_elements, paragraph_units, w_tag  # noqa: E402
-from source_formats import TEXT_SUFFIXES  # noqa: E402
+from source_formats import TEXT_SUFFIXES, latex_project_tree  # noqa: E402
 
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 IGNORABLE_RE = re.compile(r"(?:\s| |​|‌|‍|⁠|⁣)")
@@ -466,31 +466,77 @@ def validate_item(item: Replacement) -> tuple[list[str], list[str], list[str]]:
     return validate_replacement_citations(item), validate_replacement_numbers(item), validate_replacement_markup(item)
 
 
+@dataclass
+class TextSource:
+    path: Path
+    rel: str
+    key: tuple[int, ...]
+    inside: bool  # inside the main file's folder, so a revised copy can be written under --out-dir
+    content: str
+
+
+def text_sources(source: Path) -> list[TextSource]:
+    """The file itself, or for a LaTeX main file every .tex file of the project in reading order."""
+    main = source.resolve()
+    root = main.parent
+    tree = latex_project_tree(main) if main.suffix.lower() == ".tex" else [(main, ())]
+    sources = []
+    for path, key in tree:
+        try:
+            rel, inside = path.relative_to(root).as_posix(), True
+        except ValueError:
+            rel, inside = str(path), False
+        sources.append(TextSource(path=path, rel=rel, key=key, inside=inside, content=read_text_file(path)))
+    return sources
+
+
+def project_spans(sources: list[TextSource], text: str) -> list[tuple[int, int, int]]:
+    """(source index, start, end) of every match of ``text`` across the project, in reading order."""
+    found = []
+    for index, src in enumerate(sources):
+        for start, end in find_text_spans(src.content, text):
+            found.append((src.key + (line_of(src.content, start), start), index, start, end))
+    found.sort(key=lambda item: item[0])
+    return [(index, start, end) for _key, index, start, end in found]
+
+
 def dry_run_text(source: Path, replacements_path: Path) -> dict[str, Any]:
-    content = read_text_file(source)
+    sources = text_sources(source)
+    multi = len(sources) > 1
     items = []
     for item in normalize_replacements(load_json(replacements_path)):
-        spans = find_text_spans(content, item.sourceText)
+        spans = project_spans(sources, item.sourceText)
         missing_citations, missing_numbers, missing_markup = validate_item(item)
         unique = len(spans) == 1 or (item.occurrence is not None and 1 <= item.occurrence <= len(spans))
-        items.append(
-            {
-                "chunkId": item.chunkId,
-                "matchCount": len(spans),
-                "missingCitations": missing_citations,
-                "missingNumbers": missing_numbers,
-                "missingMarkup": missing_markup,
-                "willApply": unique and not missing_citations and not missing_numbers and not missing_markup,
-                "matches": [{"line": line_of(content, start)} for start, _end in spans[:5]],
-            }
-        )
-    return {
+        outside = unique and not sources[spans[(item.occurrence or 1) - 1][0]].inside
+        matches = []
+        for index, start, _end in spans[:5]:
+            match: dict[str, Any] = {"line": line_of(sources[index].content, start)}
+            if multi:
+                match["file"] = sources[index].rel
+            matches.append(match)
+        entry = {
+            "chunkId": item.chunkId,
+            "matchCount": len(spans),
+            "missingCitations": missing_citations,
+            "missingNumbers": missing_numbers,
+            "missingMarkup": missing_markup,
+            "willApply": unique and not outside and not missing_citations and not missing_numbers and not missing_markup,
+            "matches": matches,
+        }
+        if outside:
+            entry["note"] = "the match is in a file outside the main file's folder; edit it by hand"
+        items.append(entry)
+    output = {
         "sourcePath": str(source.resolve()),
         "replacementPath": str(replacements_path.resolve()),
         "total": len(items),
         "applicable": sum(1 for item in items if item["willApply"]),
         "items": items,
     }
+    if multi:
+        output["projectFiles"] = [src.rel for src in sources]
+    return output
 
 
 def skip_reason(item: Replacement, match_count: int) -> str:
@@ -510,37 +556,103 @@ def skip_reason(item: Replacement, match_count: int) -> str:
     return ""
 
 
-def apply_text(source: Path, replacements_path: Path, output: Path) -> dict[str, Any]:
-    original = read_text_file(source)
-    content = original
+PROJECT_DIFF_NAME = "ai-check-changes.diff"
+
+
+def apply_text(source: Path, replacements_path: Path, output: Path | None = None, out_dir: Path | None = None) -> dict[str, Any]:
+    """Apply replacements to a Markdown/LaTeX/TXT source.
+
+    With ``output`` the single revised file is written there plus ``<output>.diff``. With ``out_dir``
+    (required when a LaTeX main file includes other .tex files) every .tex file of the project is
+    written under ``out_dir`` at its relative path, so ``main.tex`` there still finds its chapters,
+    and one patch with all changes goes to ``out_dir/ai-check-changes.diff``.
+    """
+    sources = text_sources(source)
+    multi = len(sources) > 1
+    root = source.resolve().parent
+    if multi and out_dir is None:
+        raise ValueError(
+            f"{source.name} includes {len(sources) - 1} other .tex file(s); use --out-dir <folder> to get a revised copy of the whole project"
+        )
+    if out_dir is not None:
+        if out_dir.resolve() == root:
+            raise ValueError("--out-dir must not be the folder of the source; AI-check never overwrites the original files")
+        for src in sources:
+            if src.inside and (out_dir / src.rel).resolve() == src.path:
+                raise ValueError(f"--out-dir would overwrite the original {src.rel}")
+
+    originals = [src.content for src in sources]
     applied, skipped = [], []
     for item in normalize_replacements(load_json(replacements_path)):
-        spans = find_text_spans(content, item.sourceText)
+        spans = project_spans(sources, item.sourceText)
         reason = skip_reason(item, len(spans))
+        if not reason and not sources[spans[(item.occurrence or 1) - 1][0]].inside:
+            reason = "the match is in a file outside the main file's folder; edit it by hand"
         if reason:
             skipped.append({"chunkId": item.chunkId, "reason": reason})
             continue
-        start, end = spans[(item.occurrence or 1) - 1]
-        content = content[:start] + item.replacementText + content[end:]
-        applied.append({"chunkId": item.chunkId, "line": line_of(content, start)})
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(content, encoding="utf-8", newline="")
-    diff_path = output.with_name(output.name + ".diff")
-    diff = difflib.unified_diff(
-        original.splitlines(keepends=True), content.splitlines(keepends=True), fromfile=source.name, tofile=output.name
-    )
-    diff_path.write_text("".join(diff), encoding="utf-8", newline="")
-    return {
+        index, start, end = spans[(item.occurrence or 1) - 1]
+        src = sources[index]
+        src.content = src.content[:start] + item.replacementText + src.content[end:]
+        entry: dict[str, Any] = {"chunkId": item.chunkId, "line": line_of(src.content, start)}
+        if multi:
+            entry["file"] = src.rel
+        applied.append(entry)
+
+    common = {
         "sourcePath": str(source.resolve()),
-        "outputPath": str(output.resolve()),
-        "diffPath": str(diff_path.resolve()),
         "replacementPath": str(replacements_path.resolve()),
         "trackChanges": False,
         "appliedCount": len(applied),
         "skippedCount": len(skipped),
         "applied": applied,
         "skipped": skipped,
-        "note": "Text source rewritten into a new file; review the .diff (or use git diff / latexdiff) before final use.",
+    }
+    if out_dir is None:
+        assert output is not None
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(sources[0].content, encoding="utf-8", newline="")
+        diff_path = output.with_name(output.name + ".diff")
+        diff = difflib.unified_diff(
+            originals[0].splitlines(keepends=True), sources[0].content.splitlines(keepends=True), fromfile=source.name, tofile=output.name
+        )
+        diff_path.write_text("".join(diff), encoding="utf-8", newline="")
+        return {
+            **common,
+            "outputPath": str(output.resolve()),
+            "diffPath": str(diff_path.resolve()),
+            "note": "Text source rewritten into a new file; review the .diff (or use git diff / latexdiff) before final use.",
+        }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    patch: list[str] = []
+    changed: list[str] = []
+    for src, original in zip(sources, originals):
+        if not src.inside:
+            continue
+        dest = out_dir / src.rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(src.content, encoding="utf-8", newline="")
+        if src.content != original:
+            changed.append(src.rel)
+            patch.extend(
+                difflib.unified_diff(
+                    original.splitlines(keepends=True), src.content.splitlines(keepends=True), fromfile=f"a/{src.rel}", tofile=f"b/{src.rel}"
+                )
+            )
+    diff_path = out_dir / PROJECT_DIFF_NAME
+    diff_path.write_text("".join(patch), encoding="utf-8", newline="")
+    return {
+        **common,
+        "outputDir": str(out_dir.resolve()),
+        "outputPath": str((out_dir / sources[0].rel).resolve()),
+        "diffPath": str(diff_path.resolve()),
+        "projectFiles": [src.rel for src in sources],
+        "changedFiles": changed,
+        "note": (
+            "Every .tex file of the project was copied to the output folder with the edits applied (figures and .bib were not copied). "
+            "Review ai-check-changes.diff; to take the edits, copy the changed files back or run `git apply ai-check-changes.diff` in the project folder."
+        ),
     }
 
 
@@ -587,13 +699,20 @@ def dry_run(source_docx: Path, replacements_path: Path) -> dict[str, Any]:
 def apply_replacements(
     source_docx: Path,
     replacements_path: Path,
-    output_docx: Path,
+    output_docx: Path | None,
     dry_run_only: bool = False,
     track_changes: bool = False,
+    out_dir: Path | None = None,
 ) -> dict[str, Any]:
     preview = dry_run(source_docx, replacements_path)
     if dry_run_only:
         return preview
+    if output_docx is None and out_dir is None:
+        raise ValueError("give --out <new file> (or --out-dir <folder> for Markdown/LaTeX/TXT)")
+    if out_dir is not None:
+        if not is_text_source(source_docx):
+            raise ValueError("--out-dir is for Markdown/LaTeX/TXT sources; use --out <new.docx> for Word")
+        return apply_text(source_docx, replacements_path, out_dir=out_dir)
     if output_docx.resolve() == source_docx.resolve():
         raise ValueError("--out must be a new file; AI-check never modifies the original DOCX in place")
     if is_text_source(source_docx):
@@ -676,9 +795,10 @@ def command_apply(args: argparse.Namespace) -> int:
     output = apply_replacements(
         Path(args.docx),
         Path(args.replacements_json),
-        Path(args.out),
+        Path(args.out) if args.out else None,
         dry_run_only=False,
         track_changes=args.track_changes,
+        out_dir=Path(args.out_dir) if args.out_dir else None,
     )
     if args.out_json:
         write_json(Path(args.out_json), output)
@@ -699,7 +819,12 @@ def build_parser() -> argparse.ArgumentParser:
     apply = sub.add_parser("apply", help="apply replacements to a new DOCX")
     apply.add_argument("docx")
     apply.add_argument("replacements_json")
-    apply.add_argument("--out", required=True, help="new output path with the same extension (must differ from the source)")
+    target = apply.add_mutually_exclusive_group(required=True)
+    target.add_argument("--out", help="new output path with the same extension (must differ from the source)")
+    target.add_argument(
+        "--out-dir",
+        help="Markdown/LaTeX/TXT: write the revised copy into this folder; required for a LaTeX main file that inputs or includes chapter files",
+    )
     apply.add_argument("--out-json", help="write apply summary JSON")
     apply.add_argument("--track-changes", action="store_true", help="DOCX only: write edits as Word tracked changes (w:ins/w:del)")
     apply.set_defaults(func=command_apply)
@@ -707,7 +832,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def use_utf8_output() -> None:
+    """JSON and help text contain Chinese; never crash on a cp1252/cp437 console or pipe."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):  # pragma: no cover - replaced or detached streams
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    use_utf8_output()
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

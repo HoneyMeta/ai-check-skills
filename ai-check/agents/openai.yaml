@@ -1,6 +1,6 @@
 interface:
   display_name: "AI-check"
-  short_description: "AI-writing self-check reports for DOCX, Markdown and LaTeX."
+  short_description: "AI-writing self-check reports for DOCX, Markdown and LaTeX, one paper or a folder."
   brand_color: "#4B89DC"
   default_prompt: "Use $ai-check to generate an AI-writing-rate report for this paper (Word, Markdown or LaTeX), then ask before revising it."
 

@@ -10,6 +10,18 @@ Word/DOCX、Markdown、LaTeX 论文的 AI 率自查报告、降低 AI 写作痕�
 
 ![AI-check report preview](docs/assets/ai-check-report-preview.png?v=20260628)
 
+## v0.4 新增
+
+- **多文件 LaTeX 论文**：只给主文件 `main.tex`，自动跟进 `\input`、`\include`、`\subfile`、`\import`，
+  按阅读顺序把各章一起检测；找不到的章节文件会列出来。改写时用 `--out-dir`：在各章文件里定位原句，
+  把整套 `.tex` 写到新文件夹，所有改动合成一个 `ai-check-changes.diff`（可直接 `git apply`）。
+- **批注版 Word**：DOCX 出报告时同时生成 `<文件名>.AI-check-comments.docx`，每个疑似片段上挂一条
+  Word 批注（参考值、原因、信号），正文一个字不改。打开 Word 就能边看批注边改，不用在报告和论文之间来回翻。
+- **批量自查**：`ai_batch.py scan <文件夹>` 一次扫描整个文件夹的论文（跳过 Word 临时文件、AI-check 输出、
+  被主文件引用的章节 `.tex`），助手逐篇判断后 `ai_batch.py report` 生成每篇的报告和一张汇总表
+  （`batch-summary.html` / `.csv` / `.json`，按 AI 率排序，CSV 可直接用 Excel 打开）。适合导师一次看一批、
+  或者每章单独一个 Word 文件的情况。
+
 ## 功能亮点
 
 - 支持 `.docx`、`.md`、`.tex`、`.txt`：按文档顺序读取摘要、正文、结论（DOCX 含内容控件里的段落，
@@ -33,6 +45,9 @@ Word/DOCX、Markdown、LaTeX 论文的 AI 率自查报告、降低 AI 写作痕�
 - 在用户确认后，将改写方案写入新的 DOCX，不会原地修改原文档；只改动有变化的字符，
   原段落的加粗、上标引用、公式、图片、域代码都会保留。
 - 可选以 **Word 修订（Track Changes）** 形式写入，在 Word 里逐条接受/拒绝。
+- DOCX 报告附带**批注版 Word**：每个疑似片段一条批注，写明参考值、原因和信号，正文不变。
+- 多文件 LaTeX 论文（`\input` / `\include` / `\subfile` / `\import`）整体检测、跨文件改写。
+- 批量模式：一个文件夹的论文一次检测，输出汇总表（HTML / Excel 可读的 CSV / JSON）。
 - Markdown/LaTeX/TXT 改写写入新文件，同时生成 `.diff` 供审阅；LaTeX 的 `\cite{}`、`\ref{}`、`$x$`，
   Markdown 的链接、脚注、行内代码必须原样保留。
 - 改写校验：丢失引用编号（如 `[4]`）、数字（如 `2.1`）或上述标记的替换会被拒绝。
@@ -67,8 +82,10 @@ AI-check Skills 不依赖 LibreOffice、`soffice`、Microsoft Word 自动化、D
 依赖（Python 3.10+，缺少时 AI 会按 SKILL.md 自动安装）：
 
 ```bash
-python -m pip install "python-docx>=1.1" "reportlab>=4"
+python -m pip install -U "python-docx>=1.2" "reportlab>=4"
 ```
+
+批注版 Word 需要 python-docx 1.2 及以上。
 
 ## 目录结构
 
@@ -77,9 +94,11 @@ ai-check/
   SKILL.md
   agents/openai.yaml
   scripts/
-    ai_check.py          # scan / report / compare / features
-    ai_rewrite_docx.py   # dry-run / apply（DOCX、Markdown、LaTeX、TXT）
-    source_formats.py    # Markdown / LaTeX / TXT 读取
+    ai_check.py          # scan / report / annotate / compare / features
+    ai_rewrite_docx.py   # dry-run / apply（DOCX、Markdown、LaTeX、TXT；LaTeX 多文件用 --out-dir）
+    ai_batch.py          # scan / report：整个文件夹批量检测 + 汇总表
+    docx_annotate.py     # 批注版 Word
+    source_formats.py    # Markdown / LaTeX（含 \input/\include）/ TXT 读取
   references/
     ai_rate_signals.md
     report_format.md
@@ -89,6 +108,7 @@ docs/
 tests/
   test_ai_check.py
   test_formats_and_signals.py
+  test_projects_and_annotations.py
 ```
 
 ## 快速开始
@@ -111,6 +131,7 @@ AI 助手会读取文档，生成可解释的片段信号，并输出：
 - 可选择文本的 PDF 报告
 - HTML 报告
 - summary JSON
+- （DOCX）批注版 Word：`<文件名>.AI-check-comments.docx`
 
 如果需要继续降 AI 率，可以在报告生成后让 AI 助手先列出改写方案；用户确认后再写入新的 DOCX。
 原始 DOCX 不会被原地修改。
@@ -121,6 +142,9 @@ AI 助手会读取文档，生成可解释的片段信号，并输出：
 - `根据 AI-check 报告，先给我看需要修改的片段和改写方案，确认后再写出新的 Word。`
 - `确认后用修订模式写入新的 Word，我要在 Word 里逐条接受。`
 - `只检测，不改 Word。`
+- `使用 ai-check-skills 检查 F:\papers\thesis\main.tex，各章在 chapters 文件夹里。`
+- `使用 ai-check-skills 批量检查 F:\papers\2026届 文件夹里的所有论文，给我一张汇总表。`
+- `把批注版 Word 发给我，我在 Word 里对着批注改。`
 - `把改写后的 main.revised.docx 和原文对比一下，看看改写有没有引入新的套话或丢引用。`
 - `报告里的前后重复表述，帮我看看哪一处该保留、哪一处该改写。`
 
@@ -150,6 +174,20 @@ This project is a small part of [EasyIdea Research Workbench](https://honeymeta.
 full research-writing workflow with a live DOCX workbench, report import, annotations, batch review,
 and one-click accept/reject, download EasyIdea: https://honeymeta.com/easyidea
 
+### New in v0.4
+
+- **Multi-file LaTeX theses**: pass `main.tex` and `\input`, `\include`, `\subfile` and `\import` are
+  followed in reading order; missing chapter files are listed. Rewrites take `--out-dir`: sentences are
+  found in whichever chapter file holds them, the project's `.tex` files are written to a new folder,
+  and every edit lands in one `ai-check-changes.diff` that `git apply` accepts.
+- **Annotated Word copy**: a DOCX report also writes `<name>.AI-check-comments.docx`, where every
+  flagged passage carries a Word comment with the reference value, reason and signals. The text itself
+  is unchanged, so you can work through the report inside Word.
+- **Batch mode**: `ai_batch.py scan <folder>` scans every paper in a folder (skipping Word lock files,
+  AI-check outputs and chapter `.tex` files that a main file includes); after the assistant judges
+  them, `ai_batch.py report` writes each report plus one summary table (`batch-summary.html` / `.csv`
+  for Excel / `.json`), sorted by reference AI rate.
+
 ### Highlights
 
 - Reads `.docx`, `.md`, `.tex` and `.txt` in document order (DOCX content controls included, tables
@@ -176,6 +214,9 @@ and one-click accept/reject, download EasyIdea: https://honeymeta.com/easyidea
 - Rejects rewrites that drop a citation marker such as `[4]`, a number such as `2.1`, or that markup.
 - `compare` checks a revision against the original: signal counts, uniform-rhythm passages, citation
   marks and length, with warnings when a rewrite becomes more template-like or loses citations.
+- DOCX reports come with an annotated Word copy: one comment per flagged passage, text unchanged.
+- Multi-file LaTeX projects are scanned and rewritten as a whole; a folder of papers can be checked in
+  one batch with a summary table.
 - Supports Codex, Claude Code, OpenCode, and similar agent runtimes that can run local scripts.
 
 ### Independent Pipeline
@@ -203,7 +244,7 @@ skills installer `npx skills add HoneyMeta/ai-check-skills`, or copy the `ai-che
 client's skills directory, e.g. `~/.claude/skills/` (Claude Code), `~/.agents/skills/` or a project's
 `.agents/skills/` (Codex, Gemini CLI and other Agent Skills clients), `~/.config/opencode/skills/`
 (OpenCode). Check your client's docs for the exact path. Dependencies (Python 3.10+):
-`python -m pip install "python-docx>=1.1" "reportlab>=4"`.
+`python -m pip install -U "python-docx>=1.2" "reportlab>=4"` (the annotated Word copy needs python-docx 1.2+).
 
 ### Quick Start
 
@@ -219,8 +260,13 @@ For Chinese workflows, you can use:
 使用 ai-check-skills 帮我为 XXXX（文档路径）生成 AI率检测报告
 ```
 
-The assistant will scan the DOCX, produce an explainable PDF/HTML report, and only write a rewritten
-DOCX after you approve the replacement plan.
+The assistant will scan the DOCX, produce an explainable PDF/HTML report plus an annotated Word copy,
+and only write a rewritten DOCX after you approve the replacement plan. Other prompts:
+
+```text
+Use ai-check-skills on C:\papers\thesis\main.tex (chapters are in the chapters folder).
+Use ai-check-skills to check every paper in C:\papers\class-2026 and give me a summary table.
+```
 
 ### Safety Notes
 
